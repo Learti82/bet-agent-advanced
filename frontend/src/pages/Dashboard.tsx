@@ -26,7 +26,7 @@ export default function Dashboard() {
           <h1>Dashboard</h1>
           <p>Today and tomorrow ({today} – {addDays(today, 1)}, Europe/Belgrade). Every number below comes from the local dataset, your manual entries, and deterministic calculations.</p>
         </div>
-        <div className="row"><Link to="/accumulator"><button className="primary">Open accumulator builder</button></Link></div>
+        <div className="row"><Link to="/plan"><button className="primary">This week's plan</button></Link><Link to="/accumulator"><button>Accumulator builder</button></Link></div>
       </div>
       {status?.warnings.map((w, i) => <div key={i} className="notice warn" style={{ marginBottom: 8 }}>{w} {!d && <Link to="/data">Go to Data sources →</Link>}</div>)}
       <div className="grid g4" style={{ marginBottom: 12 }}>

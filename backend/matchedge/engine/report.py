@@ -55,14 +55,18 @@ def build_report(engine, *, date_from: str, date_to: str, target: float, competi
     max_legs = int(max_legs or settings["max_legs"])
     summaries = engine.analyze_window(date_from, date_to, competitions, eligible_only=True)
     padded = alt = None
+    good: list = []
+    weak: list = []
     if legs_in is None:
         good, weak = ticket_pool(summaries, engine.analyze, settings)
         built = build(good, weak, target, max_legs)
         legs, padded, alt = built["main"], built["padded"], built["alternative"]
+        limit_hit = built["limit_hit"]
         mode = "auto"
     else:
         legs = legs_in
         mode = "manual"
+        limit_hit = False
         if len(legs) >= 3:
             alt = sorted(legs, key=lambda x: x["score"], reverse=True)[:max(2, min(4, len(legs) // 2))]
     for x in legs + (padded or []) + (alt or []):
@@ -99,7 +103,12 @@ def build_report(engine, *, date_from: str, date_to: str, target: float, competi
             "legs": padded, "evaluation": pev,
             "warning": "Shown only to make the trade-off visible. These extra legs are weak; not recommended."},
         "alternative_ticket": None if not alt else {"legs": alt, "evaluation": aev},
-        "final_opinion": final_opinion(ev, target, pev, aev),
+        "final_opinion": final_opinion(ev, target, pev, aev, limit_hit, max_legs),
+        "pool": {"well_supported": len(good) if legs_in is None else None,
+                 "weak": len(weak) if legs_in is None else None,
+                 "selection_rule": "Only well-supported legs (strong/acceptable tier, high/medium confidence). Among "
+                                   "them, legs are chosen to give the whole ticket the best model-estimated chance of "
+                                   "reaching the target (lowest probability cost per unit of odds)."},
         "attribution": "Data: open-matchday (non-commercial). Estimates are model outputs, not verified probabilities.",
     }
     return report

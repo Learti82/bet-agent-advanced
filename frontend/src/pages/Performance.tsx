@@ -19,6 +19,36 @@ function GroupRow({ name, g }: { name: string; g: G }) {
   );
 }
 
+function ModelCheck() {
+  const { data, loading, error } = useFetch<G>("/api/model-check");
+  return (
+    <Panel title="Model check" sub="walk-forward on this season's finished league matches" tight>
+      <div className="panel-b">
+        <ErrorBox error={error} />
+        {loading ? <Loading label="Re-predicting every finished match from earlier data only…" /> : data && (
+          <>
+            <p className="small">{data.matches} matches. Each prediction was made with only the matches played before it, then compared with the result.
+              {data.high_confidence && <> When the model said <b>80% or more</b>, the average prediction was <b>{pct(data.high_confidence.predicted)}</b> and it actually happened <b>{pct(data.high_confidence.actual)}</b> of the time (n={data.high_confidence.n}).</>}
+            </p>
+            <div className="tbl-wrap"><table className="tbl">
+              <thead><tr><th>Market</th>{["50–60%", "60–70%", "70–80%", "80–90%", "90–100%"].map((b) => <th key={b} className="num">{b}</th>)}</tr></thead>
+              <tbody>{data.markets.map((m: G) => (
+                <tr key={m.market}><td>{m.market}</td>{["50–60%", "60–70%", "70–80%", "80–90%", "90–100%"].map((b) => {
+                  const x = m.bins.find((y: G) => y.range === b);
+                  if (!x) return <td key={b} className="num muted">—</td>;
+                  const gap = Math.round(100 * (x.predicted - x.actual));
+                  return <td key={b} className="num" title={`n=${x.n}, 95% band ${pct(x.actual_low)}–${pct(x.actual_high)}`}>{pct(x.actual)} <span className="tiny" style={{ color: Math.abs(gap) <= 2 ? "var(--muted)" : gap > 0 ? "var(--bad)" : "var(--good)" }}>({gap > 0 ? "−" : "+"}{Math.abs(gap)})</span>{x.n < 100 && <div className="tiny muted">n={x.n}, small</div>}</td>;
+                })}</tr>
+              ))}</tbody>
+            </table></div>
+            <p className="tiny muted" style={{ marginTop: 6 }}>Cells show how often the outcome happened for predictions in that band; the bracket is actual minus predicted in points (red = the model was overconfident). Settings: prior {data.settings.prior_weight}, half-life {data.settings.recency_half_life}. {data.note}</p>
+          </>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 export default function Performance() {
   const perf = useFetch<G>("/api/performance");
   const preds = useFetch<G[]>("/api/predictions");
@@ -98,6 +128,8 @@ export default function Performance() {
           </Panel>
         </>
       )}
+      <div style={{ height: 12 }} />
+      <ModelCheck />
       <div style={{ height: 12 }} />
       <Panel title="Predictions" sub="settle manually when the dataset lacks the statistic" tight>
         {preds.loading ? <Loading /> : (preds.data ?? []).length === 0 ? <Empty>No predictions yet.</Empty> : (

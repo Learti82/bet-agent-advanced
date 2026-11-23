@@ -184,12 +184,30 @@ def ticket_pool(summaries: list[dict], analyze: Callable[[str], dict], settings:
     return good, weak
 
 
+def efficiency(leg: dict) -> float:
+    """Estimated probability cost per unit of odds: log(1/p) / log(odds). Lower is better.
+
+    For a fixed target the chance that every leg wins is Π p and the odds constraint is Σ log o ≥ log T,
+    so picking legs with the lowest cost per unit of log-odds maximises the model's estimate for the
+    whole ticket. Legs from flagged matches carry a 15% penalty.
+    """
+    p, o = leg.get("probability"), leg.get("odds")
+    if not p or not o or o <= 1 or p <= 0:
+        return float("inf")
+    e = math.log(1 / p) / math.log(o)
+    return e * (1.15 if leg.get("match_status") == "flagged" else 1.0)
+
+
 def build(good: list[dict], weak: list[dict], target: float, max_legs: int) -> dict:
+    """Pick legs for ``target`` from the well-supported pool only; never pad with weak legs."""
+    def ordered(pool: list[dict]) -> list[dict]:
+        return sorted(pool, key=lambda x: (efficiency(x), -x["score"]))
+
     def greedy(pool: list[dict], start: list[dict]) -> list[dict]:
         legs = list(start)
         teams = {t for leg in legs for t in (leg["home_id"], leg["away_id"])}
         for leg in pool:
-            if combined_odds([x["odds"] for x in legs] or [1.01]) >= target and legs:
+            if legs and combined_odds([x["odds"] for x in legs]) >= target:
                 break
             if len(legs) >= max_legs:
                 break
@@ -199,20 +217,23 @@ def build(good: list[dict], weak: list[dict], target: float, max_legs: int) -> d
             teams |= {leg["home_id"], leg["away_id"]}
         return legs
 
-    main = greedy(good, [])
+    main = greedy(ordered(good), [])
     reached = bool(main) and combined_odds([x["odds"] for x in main]) >= target
-    # trim: drop the weakest legs while the target is still met
+    # trim: drop the least likely legs while the target is still met
     if reached:
         changed = True
         while changed and len(main) > 1:
             changed = False
-            weakest = min(main, key=lambda x: x["score"])
-            rest = [x for x in main if x is not weakest]
-            if combined_odds([x["odds"] for x in rest]) >= target:
-                main, changed = rest, True
+            for weakest in sorted(main, key=lambda x: x.get("probability") or 0):
+                rest = [x for x in main if x is not weakest]
+                if combined_odds([x["odds"] for x in rest]) >= target:
+                    main, changed = rest, True
+                    break
+    unused_good = [x for x in good if x not in main]
+    limit_hit = not reached and len(main) >= max_legs and bool(unused_good)
     padded = None
-    if not reached and weak:
-        padded_legs = greedy(weak, main)
+    if not reached and weak and not limit_hit:
+        padded_legs = greedy(ordered(weak), main)
         if padded_legs and combined_odds([x["odds"] for x in padded_legs]) >= target:
             padded = padded_legs
     alt = None
@@ -220,10 +241,12 @@ def build(good: list[dict], weak: list[dict], target: float, max_legs: int) -> d
         k = max(2, min(4, math.ceil(len(main) / 2)))
         if k < len(main):
             alt = sorted(main, key=lambda x: x["score"], reverse=True)[:k]
-    return {"main": main, "target_reached": reached, "padded": padded, "alternative": alt}
+    return {"main": main, "target_reached": reached, "padded": padded, "alternative": alt,
+            "limit_hit": limit_hit, "max_legs": max_legs}
 
 
-def final_opinion(main_eval: dict, target: float, padded_eval: dict | None, alt_eval: dict | None) -> str:
+def final_opinion(main_eval: dict, target: float, padded_eval: dict | None, alt_eval: dict | None,
+                  limit_hit: bool = False, max_legs: int | None = None) -> str:
     n = main_eval["n_selections"]
     if n == 0:
         return ("No ticket: none of the analysed matches produced a priced selection that passes the evidence gates. "
@@ -243,6 +266,10 @@ def final_opinion(main_eval: dict, target: float, padded_eval: dict | None, alt_
                          "Each leg is individually defensible.")
         parts.append(f"Even so, {n} legs compound: the naive model estimate that every leg wins is {p_txt} "
                      f"(the bookmaker price implies {100 * imp:.2f}%). Treat it as a long shot, not a forecast.")
+    elif limit_hit:
+        parts.append(f"The ticket stopped at {combo:.2f} because it reached the maximum of {max_legs} legs "
+                     f"(Settings → max_legs) before the {target:g} target (naive all-win estimate {p_txt}). "
+                     "Raising the limit adds more legs, and every extra leg lowers the chance of the whole ticket.")
     else:
         parts.append(f"The {target:g} target is not reachable with well-supported selections. The honest ticket is "
                      f"{combo:.2f} with {n} legs (naive all-win estimate {p_txt}).")

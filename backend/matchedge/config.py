@@ -34,8 +34,11 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "timezone": "Europe/Belgrade",
     "bookmaker": "Bet365",
     # --- model ---
-    "recency_half_life": 8.0,  # matches; weight halves every N matches back in time
-    "prior_weight": 4.0,  # pseudo-matches of league-average shrinkage per rating
+    # recency/shrinkage chosen by a walk-forward check on 2026/27 results (Historical performance →
+    # Model check): prior 12 / half-life 16 gave the lowest log loss and cut overconfidence on 80%+
+    # predictions from ~3 points (prior 4 / half-life 8) to ~1 point.
+    "recency_half_life": 16.0,  # matches; weight halves every N matches back in time
+    "prior_weight": 12.0,  # pseudo-matches of league-average shrinkage per rating
     "min_matches_model": 5,  # per team, below this the model returns "Insufficient data"
     "min_matches_stat": 5,  # per team, below this a statistic is flagged as a small sample
     "goal_cap": 5,  # goals per team per match counted when estimating ratings (extreme results)
@@ -56,6 +59,10 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "default_target_odds": 110.0,
     "allow_snapshot_odds": True,  # allow dataset snapshot prices (clearly labelled) in auto-build
     "max_legs": 10,
+    # --- weekly plan ---
+    "plan_targets": "50,110",  # one ticket per target for each slot
+    "plan_max_legs": 14,  # leg limit for weekly-plan tickets (a 110 ticket from ~1.4 prices needs ~13 legs)
+    "plan_weekend_competitions": "",  # comma-separated codes; empty = European top divisions
     # --- optional local AI ---
     "ai_enabled": False,
     "ollama_url": "http://127.0.0.1:11434",

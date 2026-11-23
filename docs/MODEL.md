@@ -82,6 +82,13 @@ to whole percentages.
 **Insufficient data.** If either team has fewer than `min_matches_model` matches (default 5),
 the model returns `"Insufficient data"` and goal markets are unsupported.
 
+**Calibration of the defaults.** `prior_weight = 12` and `recency_half_life = 16` were chosen by a
+walk-forward check on 5,553 finished 2026/27 league matches (each predicted from earlier matches
+only; `engine/backtest.py`, shown on the Historical performance page). Grid tested: prior 4–30 ×
+half-life 8/16/∞. Prior 4 / half-life 8 (the first version) was overconfident by ~3 points on
+predictions of 80 %+; prior 12 / half-life 16 had the lowest log loss and ~1 point. Choosing two
+parameters on the same season is mild in-sample tuning — keep watching the check as data grows.
+
 ### Known limitations
 
 * Independence ignores the small negative/positive correlation of the two teams' goals and

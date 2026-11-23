@@ -5,6 +5,7 @@ import { useFetch } from "./components/ui";
 import { fmtOdds } from "./format";
 import { useTicket } from "./ticket";
 import Dashboard from "./pages/Dashboard";
+import WeeklyPlan from "./pages/WeeklyPlan";
 import Fixtures from "./pages/Fixtures";
 import MatchResearch from "./pages/MatchResearch";
 import Accumulator from "./pages/Accumulator";
@@ -19,6 +20,7 @@ export const useStatus = () => useContext(StatusCtx);
 
 const NAV = [
   ["/", "Dashboard"],
+  ["/plan", "Weekly plan"],
   ["/fixtures", "Upcoming fixtures"],
   ["/research", "Match research"],
   ["/accumulator", "Accumulator builder"],
@@ -85,6 +87,7 @@ export default function App() {
           </header>
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/plan" element={<WeeklyPlan />} />
             <Route path="/fixtures" element={<Fixtures />} />
             <Route path="/research" element={<MatchResearch />} />
             <Route path="/match/:id" element={<MatchResearch />} />

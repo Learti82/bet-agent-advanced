@@ -20,6 +20,8 @@ from .engine.analysis import Engine
 from .engine.markets import LINE_MARKETS, MARKET_NAMES, VALID_SELECTIONS, selection_key
 from .engine.report import build_report, legs_from_request
 from .engine.accumulator import evaluate_ticket
+from .engine.backtest import model_check
+from .engine.plan import build_week_plan, parse_targets, weekend_competitions
 from .engine.tracking import auto_settle, performance
 from .importer import ImportErrorMatchEdge, dataset_age_days, import_from_directory, run_import
 from .links import research_links
@@ -343,6 +345,20 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             c.execute("DELETE FROM tickets WHERE id=?", (tid,))
         return {"ok": True}
 
+    # ------------------------------------------------------------------ weekly plan
+    @app.get("/api/plan")
+    def plan(week_start: str | None = None, targets: str | None = None):
+        try:
+            ws = date.fromisoformat(week_start) if week_start else None
+            tg = parse_targets(targets) if targets else None
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+        return build_week_plan(engine, ws, tg)
+
+    @app.get("/api/plan/weekend-competitions")
+    def plan_weekend():
+        return weekend_competitions(db.get_settings(), engine.store.competitions)
+
     # ------------------------------------------------------------------ tracking
     @app.get("/api/predictions")
     def predictions(status: str | None = None):
@@ -367,6 +383,17 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     @app.get("/api/performance")
     def perf():
         return performance(db)
+
+    _check_cache: dict = {}
+
+    @app.get("/api/model-check")
+    def model_check_ep():
+        s = db.get_settings()
+        key = (engine.version, s["prior_weight"], s["recency_half_life"], s["goal_cap"])
+        if key not in _check_cache:
+            _check_cache.clear()
+            _check_cache[key] = model_check(engine.store, s)
+        return _check_cache[key]
 
     # ------------------------------------------------------------------ teams / aliases
     @app.get("/api/teams/links")
@@ -415,6 +442,10 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         try:
             if "timezone" in values:
                 tz(str(values["timezone"]))
+            if "plan_targets" in values:
+                values["plan_targets"] = ",".join(f"{t:g}" for t in parse_targets(values["plan_targets"]))
+            if isinstance(values.get("plan_weekend_competitions"), list):
+                values["plan_weekend_competitions"] = ",".join(values["plan_weekend_competitions"])
             out = db.update_settings(values)
         except (KeyError, ValueError) as exc:
             raise HTTPException(422, str(exc))

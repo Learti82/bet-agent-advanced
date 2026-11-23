@@ -30,6 +30,11 @@ const GROUPS: [string, string, [string, string][]][] = [
     ["team_stale_days", "Team data older than this before kickoff is flagged."],
   ]],
   ["Accumulator", "", [["default_target_odds", "Default target."], ["max_legs", "Maximum legs the builder will use."], ["allow_snapshot_odds", "Allow labelled dataset snapshot prices in analysis and auto-build. Manual prices always win."]]],
+  ["Weekly plan", "Champions League Tue & Wed · Europa + Conference League Thu · weekend leagues Sat & Sun.", [
+    ["plan_targets", "Comma-separated targets; one ticket per target in every slot (e.g. 50,110)."],
+    ["plan_max_legs", "Leg limit for weekly-plan tickets. More legs reach bigger targets but lower the chance of the whole ticket."],
+    ["plan_weekend_competitions", "Weekend league codes, comma-separated. Empty = European top divisions. Easier to edit on the Weekly plan page."],
+  ]],
   ["Optional local AI (Ollama)", "Runs on your computer. Disabled by default; the app works fully without it.", [
     ["ai_enabled", "Use a local Ollama model to write explanations (validated against the data)."],
     ["ollama_url", "Local Ollama address."],

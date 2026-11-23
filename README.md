@@ -50,6 +50,27 @@ downloads the Open-Matchday dataset on first run, and opens **http://127.0.0.1:8
 The server binds to `127.0.0.1` only. Your database lives in `data/matchedge.sqlite3`
 (git-ignored); delete it to start over.
 
+### Weekly plan
+
+The **Weekly plan** page builds three separate ticket slots for any week (Monday–Sunday, Europe/Belgrade):
+
+| Slot | Days | Competitions |
+|---|---|---|
+| Champions League | Tuesday & Wednesday | UEFA Champions League |
+| Europa + Conference League | Thursday | UEFA Europa League and Conference League together |
+| Weekend leagues | Saturday & Sunday | European top divisions by default (choose your own leagues on the page) |
+
+Each slot gets one ticket per target — **50 and 110** by default (change on the page or in
+Settings → `plan_targets`). The builder uses only well-supported, priced selections and stops at
+the target; if a slot cannot reach a target honestly it says so, and when both targets would need
+the same legs the page shows one ticket instead of two copies. Weeks without European matches show
+the UEFA slots as empty. The two tickets in a slot usually share legs — the page tells you how many.
+Weekly-plan tickets may use up to `plan_max_legs` (default 14) legs; each ticket shows the model's
+estimated chance of every leg winning next to the bookmaker's implied chance.
+
+Routine: import data → open Weekly plan → enter your own Bet365 prices for the listed legs (or
+replace snapshot prices) → **Rebuild** → **Save & track** the tickets you place.
+
 ### Daily routine
 
 1. **Data sources → Download & import latest** (the dataset is rebuilt upstream every day at 00:00 UTC).
@@ -145,6 +166,11 @@ Full details: [`docs/MODEL.md`](docs/MODEL.md) (statistics and probability model
   blocked, same-team and same-round correlations are flagged; the builder stops at the target
   and never pads. If the target is unreachable it says so, shows what padding would cost, and
   proposes a smaller alternative.
+* **Model check** — every finished league match of the season is re-predicted using only earlier
+  matches and compared with the result (Historical performance page). The default shrinkage
+  (12 pseudo-matches) and recency half-life (16 matches) were chosen from this check: they gave the
+  lowest log loss and cut overconfidence on 80 %+ predictions from about 3 points to about 1.
+  Remaining weak spot: Under 3.5 goals is still ~5 points overconfident at the top end.
 * **Tracking** — saved tickets record price, model estimate and data quality at prediction time;
   imports settle them from real results (markets whose statistic is missing need manual
   settlement). Dashboards: overall, goals, corners, cards, match winner, odds ranges and

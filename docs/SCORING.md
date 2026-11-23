@@ -120,10 +120,13 @@ markets that could still be considered.
 * "Naive model estimate" = product of leg probabilities, explicitly assuming independence.
 
 **Builder.** Pool = best priced qualifying selection per non-rejected match, split into
-strong/acceptable legs with high/medium confidence and the rest ("weak"). Candidates rank before
-flagged matches, then by score. The builder adds strong legs until the target is reached or
-`max_legs` is hit, never using the same team twice, then trims the weakest legs while the target
-still holds. If the target is not reached it **stops** — the report states that the target is
+strong/acceptable legs with high/medium confidence and the rest ("weak"). Only the first group is
+used for the ticket. Within it, legs are ordered by *probability cost per unit of odds*,
+`log(1/p) / log(odds)` (×1.15 for legs from flagged matches): for a fixed target the chance of the
+whole ticket is Π p subject to Σ log(odds) ≥ log(target), so the cheapest legs give the best
+estimated ticket. The builder adds legs until the target is reached or `max_legs` (weekly plan:
+`plan_max_legs`) is hit, never using the same team twice, then drops the least likely legs while
+the target still holds. If it stopped because of the leg limit, the report says so. If the target is not reached it **stops** — the report states that the target is
 unreachable with well-supported legs, shows (separately, marked not recommended) the weak legs
 padding would require and the resulting probability, and proposes a smaller alternative of the
 2–4 best legs.
