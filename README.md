@@ -28,11 +28,14 @@ macOS / Linux:
 ./start.sh
 ```
 
-Windows:
+Windows (Command Prompt or PowerShell, inside the project folder):
 
 ```bat
 start.bat
 ```
+
+In PowerShell type `.\start.bat`. Install Python from python.org with **"Add python.exe to PATH"**
+ticked, and Node.js LTS from nodejs.org, then open a *new* terminal before the first run.
 
 The script creates a virtual environment, installs the Python packages, builds the interface,
 downloads the Open-Matchday dataset on first run, and opens **http://127.0.0.1:8000**.

@@ -11,6 +11,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("serve", help="Run the local web app")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
+    s.add_argument("--open", action="store_true", help="Open the app in the default browser once started")
     i = sub.add_parser("import", help="Download and import the Open-Matchday dataset")
     i.add_argument("--local", help="Import from a local clone of the open-matchday repository instead")
     sub.add_parser("settle", help="Settle pending predictions against imported results")
@@ -21,7 +22,12 @@ def main(argv: list[str] | None = None) -> int:
         from .main import create_app
         if args.host not in ("127.0.0.1", "localhost", "::1"):
             print(f"Warning: binding to {args.host} exposes your private data on the network.", file=sys.stderr)
-        uvicorn.run(create_app(), host=args.host, port=args.port, log_level="info")
+        app = create_app()
+        if args.open:
+            import threading
+            import webbrowser
+            threading.Timer(1.5, webbrowser.open, [f"http://127.0.0.1:{args.port}"]).start()
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
         return 0
     from .db import Database
     db = Database()
