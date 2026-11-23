@@ -53,12 +53,12 @@ def _league_profile(store: MatchStore, code: str, before, getter, min_league: in
 
 
 def _league_profile_uncached(store: MatchStore, code: str, before, getter, min_league: int):
-    rows = store.comp_results(code, before)
+    rows = store.comp_results(code, before, 400)
     vals = [(getter(m, "home"), getter(m, "away")) for m in rows]
     vals = [(h, a) for h, a in vals if h is not None and a is not None]
     src = code
     if len(vals) < min_league:
-        pooled = [m for ms in store.by_comp.values() for m in ms if m["date_obj"] < before]
+        pooled = [m for c2 in store.by_comp for m in store.comp_results(c2, before, 400)]
         vals = [(getter(m, "home"), getter(m, "away")) for m in pooled]
         vals = [(h, a) for h, a in vals if h is not None and a is not None]
         src = "pooled"

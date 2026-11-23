@@ -74,6 +74,7 @@ class ImportReport:
     results: int = 0
     fixtures: int = 0
     snapshot_prices: int = 0
+    archived_prices: int = 0
     warnings: list[str] = field(default_factory=list)
     unlinked_teams: list[dict] = field(default_factory=list)
 
@@ -358,6 +359,16 @@ def import_from_directory(db: Database, root: Path, method: str = "local",
             c.execute("UPDATE matches SET status='missing_from_source' WHERE in_latest_import=0 AND status='scheduled'")
             c.execute("DELETE FROM competitions")
             c.executemany("INSERT INTO competitions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", comps_out)
+            # archive: keep every distinct snapshot price over time (for price history and closing-line value)
+            latest = {(r[0], r[1], r[2], r[3], r[4]): r[5] for r in c.execute(
+                "SELECT h.match_id, h.bookmaker, h.market, h.selection, h.line, h.odds FROM odds_history h JOIN "
+                "(SELECT match_id, bookmaker, market, selection, IFNULL(line, -999) l, MAX(id) mid FROM odds_history "
+                "GROUP BY match_id, bookmaker, market, selection, IFNULL(line, -999)) x ON h.id = x.mid")}
+            archive = [(r[0], r[1], r[2], r[3], r[4], r[5], r[6], "dataset_snapshot") for r in snapshot_rows
+                       if latest.get((r[0], r[1], r[2], r[3], r[4])) != r[5]]
+            c.executemany("INSERT INTO odds_history(match_id, bookmaker, market, selection, line, odds, captured_at, "
+                          "source) VALUES(?,?,?,?,?,?,?,?)", archive)
+            report.archived_prices = len(archive)
             c.execute("DELETE FROM odds WHERE source='dataset_snapshot'")
             c.executemany("INSERT INTO odds(match_id, bookmaker, market, selection, line, odds, checked_at, "
                           "source, note, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", snapshot_rows)

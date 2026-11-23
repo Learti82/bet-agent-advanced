@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, ErrorBar, Legend, Line, ComposedChart, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis } from "recharts";
 import { api, enc } from "../api";
@@ -16,6 +16,101 @@ function GroupRow({ name, g }: { name: string; g: G }) {
       <td className="num" style={{ color: g.flat_stake_profit_units > 0 ? "var(--good)" : g.flat_stake_profit_units < 0 ? "var(--bad)" : undefined }}>{num(g.flat_stake_profit_units)}</td>
       <td className="num">{g.brier_score ?? "—"}</td>
     </tr>
+  );
+}
+
+function signedPct(x: number | null | undefined, d = 1) {
+  if (x == null) return "—";
+  return `${x > 0 ? "+" : ""}${(100 * x).toFixed(d)}%`;
+}
+
+function ClvPanel({ clv }: { clv: G }) {
+  const o = clv.overall;
+  return (
+    <Panel title="Closing-line value" sub="did you beat Bet365's final price?">
+      {o.n === 0 ? <p className="small muted">No settled bets with a closing price yet. Save tickets and import after kickoff: closing prices come from football-data.co.uk (true Bet365 close for 1X2, Over/Under 2.5, main Asian line) or the last daily snapshot (approximate).</p> : (
+        <>
+          <div className="grid g3" style={{ marginBottom: 8 }}>
+            <div><div className="muted small">Average CLV</div><div className="big-odds" style={{ fontSize: 22, color: o.avg_clv > 0 ? "var(--good)" : "var(--bad)" }}>{signedPct(o.avg_clv)}</div></div>
+            <div><div className="muted small">Beat the close</div><div className="big-odds" style={{ fontSize: 22 }}>{pct(o.beat_close_share)}</div></div>
+            <div><div className="muted small">Bets with a closing price</div><div className="big-odds" style={{ fontSize: 22 }}>{o.n}</div><div className="tiny muted">{pct(o.true_closing_share)} true Bet365 close</div></div>
+          </div>
+          <table className="tbl"><thead><tr><th>Market type</th><th className="num">n</th><th className="num">Avg CLV</th><th className="num">Beat close</th></tr></thead>
+            <tbody>{Object.entries(clv.by_family).filter(([, v]: [string, any]) => v.n).map(([k, v]: [string, any]) => <tr key={k}><td>{k}</td><td className="num">{v.n}</td><td className="num">{signedPct(v.avg_clv)}</td><td className="num">{pct(v.beat_close_share)}</td></tr>)}</tbody></table>
+        </>
+      )}
+      <p className="tiny muted" style={{ marginTop: 6 }}>{clv.note}</p>
+    </Panel>
+  );
+}
+
+function Backtest() {
+  const [run, setRun] = useState<G | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const load = async () => { try { setRun(await api<G>("/api/backtest")); } catch (e) { setErr((e as Error).message); } };
+  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    if (run?.status !== "running") return;
+    const t = setInterval(load, 2000);
+    return () => clearInterval(t);
+  }, [run?.status]);
+  const start = async () => {
+    setErr(null);
+    try { await api("/api/backtest", { method: "POST", json: {} }); await load(); } catch (e) { setErr((e as Error).message); }
+  };
+  const r = run?.result;
+  const legsAll = r?.legs?.find((x: G) => x.season === "all");
+  return (
+    <Panel title="Profit backtest — weekend plan" sub="past seasons, real Bet365 prices" actions={<button className="primary" onClick={start} disabled={run?.status === "running"}>{run?.status === "running" ? "Running…" : r ? "Run again" : "Run backtest"}</button>}>
+      <ErrorBox error={err ?? (run?.status === "failed" ? run.error : null)} />
+      {run?.status === "running" && <Loading label={`Replaying every weekend: ${run.progress}`} />}
+      {!r && run?.status !== "running" && <p className="small muted">Replays the weekend plan for every Saturday/Sunday of past seasons (football-data.co.uk), using only data available before each match and Bet365's pre-match prices of the time. Takes about a minute.</p>}
+      {r && (
+        <>
+          {legsAll && (
+            <div className={`notice ${legsAll.singles_roi > 0 && legsAll.avg_clv > 0 ? "good" : "warn"}`} style={{ marginBottom: 10 }}>
+              <b>Selected legs ({legsAll.legs}):</b> won <b>{pct(legsAll.win_rate)}</b> — the model expected {pct(legsAll.model_avg)}, Bet365's prices implied {pct(legsAll.implied_avg)}.
+              As singles: {signedPct(legsAll.singles_roi)} per bet. Against Bet365's closing price: average CLV {signedPct(legsAll.avg_clv)}, beat the close {pct(legsAll.beat_close_share)} of the time.
+              {legsAll.win_rate < legsAll.implied_avg ? " The picks did not beat the bookmaker's own estimate: on these markets the model shows no edge." : legsAll.avg_clv > 0 ? " Positive CLV is encouraging, but check it holds season by season." : ""}
+            </div>
+          )}
+          <div className="tbl-wrap"><table className="tbl">
+            <thead><tr><th>Season</th><th className="num">Target</th><th className="num">Tickets</th><th className="num">Won</th><th className="num">Model expected</th><th className="num">Avg odds</th><th className="num">Avg legs</th><th className="num">Profit (u)</th><th className="num">ROI</th><th className="num">Worst losing run</th><th className="num">Max drawdown</th></tr></thead>
+            <tbody>{r.tickets.filter((x: G) => x.subset === "all tickets" && x.tickets).map((x: G) => (
+              <tr key={x.season + x.target} style={x.season === "all" ? { fontWeight: 650 } : undefined}>
+                <td>{x.season === "all" ? "All seasons" : `20${x.season.slice(0, 2)}/${x.season.slice(2)}`}</td><td className="num">{x.target}</td><td className="num">{x.tickets}</td><td className="num">{x.won}</td><td className="num">{x.model_expected_wins}</td><td className="num">{num(x.avg_odds)}</td><td className="num">{x.avg_legs}</td>
+                <td className="num" style={{ color: x.profit_units > 0 ? "var(--good)" : "var(--bad)" }}>{num(x.profit_units)}</td><td className="num">{signedPct(x.roi)}</td><td className="num">{x.longest_losing_run}</td><td className="num">{num(x.max_drawdown_units)}</td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+          <div className="grid g2" style={{ marginTop: 10 }}>
+            <table className="tbl"><thead><tr><th>Legs by season</th><th className="num">n</th><th className="num">Won</th><th className="num">Model</th><th className="num">Implied</th><th className="num">CLV</th></tr></thead>
+              <tbody>{r.legs.filter((x: G) => x.legs).map((x: G) => <tr key={x.season}><td>{x.season === "all" ? "All" : x.season}</td><td className="num">{x.legs}</td><td className="num">{pct(x.win_rate)}</td><td className="num">{pct(x.model_avg)}</td><td className="num">{pct(x.implied_avg)}</td><td className="num">{signedPct(x.avg_clv)}</td></tr>)}</tbody></table>
+            <table className="tbl"><thead><tr><th>Legs by market</th><th className="num">n</th><th className="num">Won</th><th className="num">Implied</th><th className="num">Singles ROI</th><th className="num">CLV</th></tr></thead>
+              <tbody>{Object.entries(r.legs_by_market).map(([k, x]: [string, any]) => <tr key={k}><td>{k}</td><td className="num">{x.legs}</td><td className="num">{pct(x.win_rate)}</td><td className="num">{pct(x.implied_avg)}</td><td className="num">{signedPct(x.singles_roi)}</td><td className="num">{signedPct(x.avg_clv)}</td></tr>)}</tbody></table>
+          </div>
+          <p className="tiny muted" style={{ marginTop: 8 }}>
+            Ran {run.finished_at?.replace("T", " ").slice(0, 16)} UTC on {r.weekends} weekends, leagues: {r.competitions.join(", ")}. Limits: only markets with historical Bet365 prices (1X2, Over/Under 2.5, the main Asian handicap line) — the live app also uses BTTS, other goal lines, double chance, corners and cards, which cannot be tested here; UEFA midweek slots are not in the historical files. 1 unit staked per ticket. Past results do not guarantee future ones.
+          </p>
+        </>
+      )}
+    </Panel>
+  );
+}
+
+function LeagueStrength() {
+  const { data } = useFetch<G>("/api/league-strength");
+  if (!data || !data.leagues?.length) return null;
+  return (
+    <Panel title="League strength" sub={`learned from ${data.n_matches} European matches this season`} tight>
+      <div className="panel-b">
+        <p className="small muted">{data.note} {data.validation}</p>
+        <div className="tbl-wrap" style={{ maxHeight: 360 }}><table className="tbl">
+          <thead><tr><th>League</th><th className="num">Strength</th><th className="num">± (1 sd)</th><th className="num">Goal factor</th><th className="num">Matches</th></tr></thead>
+          <tbody>{data.leagues.map((l: G) => <tr key={l.league}><td>{l.name}</td><td className="num">{l.strength > 0 ? "+" : ""}{l.strength.toFixed(2)}</td><td className="num muted">{l.sd.toFixed(2)}</td><td className="num">{l.goal_factor}</td><td className="num">{l.matches}</td></tr>)}</tbody>
+        </table></div>
+      </div>
+    </Panel>
   );
 }
 
@@ -76,6 +171,7 @@ export default function Performance() {
             <Stat k="Flat-stake profit (singles view)" v={`${num(p.overall.flat_stake_profit_units)} u`} d={`ROI ${pct(p.overall.roi, 1)} · avg odds ${num(p.overall.avg_odds)}`} />
             <Stat k="Brier score" v={p.overall.brier_score ?? "—"} d="lower is better; 0.25 = coin-flip guessing" />
           </div>
+          <div style={{ marginBottom: 12 }}><ClvPanel clv={p.clv} /></div>
           <div className="grid g2" style={{ marginBottom: 12 }}>
             <Panel title="Estimated probability calibration" sub="predicted vs actual, with 95% bands">
               {cal.length === 0 ? <Empty>No settled selections yet.</Empty> : (
@@ -129,18 +225,24 @@ export default function Performance() {
         </>
       )}
       <div style={{ height: 12 }} />
+      <Backtest />
+      <div style={{ height: 12 }} />
       <ModelCheck />
+      <div style={{ height: 12 }} />
+      <LeagueStrength />
       <div style={{ height: 12 }} />
       <Panel title="Predictions" sub="settle manually when the dataset lacks the statistic" tight>
         {preds.loading ? <Loading /> : (preds.data ?? []).length === 0 ? <Empty>No predictions yet.</Empty> : (
           <div className="tbl-wrap"><table className="tbl">
-            <thead><tr><th>Date</th><th>Match</th><th>Market</th><th className="num">Odds</th><th className="num">Model</th><th className="num">DQ</th><th>Status</th><th>Result</th><th>Manual</th></tr></thead>
+            <thead><tr><th>Date</th><th>Match</th><th>Market</th><th className="num">Odds</th><th className="num">Close</th><th className="num">CLV</th><th className="num">Model</th><th className="num">DQ</th><th>Status</th><th>Result</th><th>Manual</th></tr></thead>
             <tbody>{(preds.data ?? []).map((r) => (
               <tr key={r.id}>
                 <td className="num small nowrap">{(r.kickoff_utc ?? r.created_at).slice(0, 10)}</td>
                 <td><Link to={`/match/${enc(r.match_id)}`}>{r.match_label}</Link><div className="muted tiny">{r.competition}</div></td>
                 <td>{r.market} {r.selection} {r.line ?? ""}</td>
                 <td className="num">{fmtOdds(r.odds)}<div className="muted tiny">{r.odds_source}</div></td>
+                <td className="num" title={r.closing_source ?? ""}>{fmtOdds(r.closing_odds)}{r.closing_source && !r.closing_source.startsWith("Bet365 closing") && <div className="tiny muted">approx.</div>}</td>
+                <td className="num" style={{ color: r.clv == null ? undefined : r.clv > 0 ? "var(--good)" : "var(--bad)" }}>{signedPct(r.clv)}</td>
                 <td className="num">{pct(r.model_probability)}</td>
                 <td className="num">{r.data_quality != null ? Math.round(r.data_quality) : "—"}</td>
                 <td><StatusChip value={r.status} /></td>

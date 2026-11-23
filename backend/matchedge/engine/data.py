@@ -7,10 +7,16 @@ statistic can be computed as "for"/"against" from the team's point of view. Miss
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from .. import config
 from ..timeutil import parse_iso
+
+
+def prev_season(season: str) -> str:
+    a = int(season[:2])
+    return f"{(a - 1) % 100:02d}{a % 100:02d}"
 
 STAT_PAIRS = {
     # perspective name: (home column, away column)
@@ -38,6 +44,7 @@ class TeamRow:
     opponent: str
     f: dict[str, int | None]  # stats "for"
     a: dict[str, int | None]  # stats "against"
+    season: str = config.SEASON
 
     @property
     def gf(self) -> int:
@@ -87,6 +94,7 @@ class MatchStore:
             m = dict(m)
             m["date_obj"] = date.fromisoformat(m["date"])
             m["kickoff_dt"] = parse_iso(m.get("kickoff_utc"))
+            m["season"] = m.get("season") or config.SEASON
             store.matches[m["id"]] = m
             if m["status"] != "finished" or m.get("ft_home") is None or m.get("ft_away") is None:
                 continue
@@ -98,26 +106,36 @@ class MatchStore:
                     hv, av = m.get(hc), m.get(ac)
                     f[stat], a[stat] = (hv, av) if venue == "H" else (av, hv)
                 store.by_team.setdefault(tid, []).append(
-                    TeamRow(m["id"], m["competition"], m["date_obj"], venue, tid, oid, opp, f, a))
+                    TeamRow(m["id"], m["competition"], m["date_obj"], venue, tid, oid, opp, f, a, m["season"]))
         for rows in store.by_team.values():
             rows.sort(key=lambda r: r.date, reverse=True)
         return store
 
-    def history(self, team_id: str, before: date, competitions: set[str] | None = None) -> list[TeamRow]:
+    def history(self, team_id: str, before: date, competitions: set[str] | None = None,
+                seasons: set[str] | None = None) -> list[TeamRow]:
         """Finished matches for a team strictly before ``before`` (no look-ahead), newest first."""
         rows = [r for r in self.by_team.get(team_id, []) if r.date < before]
         if competitions is not None:
             rows = [r for r in rows if r.competition in competitions]
+        if seasons is not None:
+            rows = [r for r in rows if r.season in seasons]
         return rows
 
-    def comp_results(self, code: str, before: date | None = None) -> list[dict[str, Any]]:
+    def comp_results(self, code: str, before: date | None = None, window_days: int | None = None) -> list[dict[str, Any]]:
         rows = self.by_comp.get(code, [])
-        return [m for m in rows if before is None or m["date_obj"] < before]
+        lo = (before - timedelta(days=window_days)) if (before and window_days) else None
+        return [m for m in rows if (before is None or m["date_obj"] < before) and (lo is None or m["date_obj"] >= lo)]
 
-    def primary_league(self, team_id: str) -> str | None:
-        """Domestic league where the team has played most of its matches."""
+    def primary_league(self, team_id: str, season: str | None = None) -> str | None:
+        """Domestic league where the team has played most of its matches in ``season`` (default: its latest)."""
+        rows = self.by_team.get(team_id, [])
+        if not rows:
+            return None
+        season = season or max(r.season for r in rows)
         counts: dict[str, int] = {}
-        for r in self.by_team.get(team_id, []):
+        for r in rows:
+            if r.season != season:
+                continue
             parts = r.competition.split("_")
             if len(parts) > 1 and parts[1].isdigit() and parts[0] != "UEFA":
                 counts[r.competition] = counts.get(r.competition, 0) + 1

@@ -58,6 +58,19 @@ class SafeJSON(JSONResponse):
         return json.dumps(_clean(content), default=_default, ensure_ascii=False).encode("utf-8")
 
 
+def run_history_import(db: Database, logs: list[str] | None = None) -> dict:
+    """football-data.co.uk refresh; failures never break the main import."""
+    s = db.get_settings()
+    if not s.get("history_enabled", True):
+        return {"skipped": True}
+    try:
+        from .history import import_history
+        out = import_history(db, int(s["history_seasons"]), log=(logs.append if logs is not None else print))
+        return {k: v for k, v in out.items() if k != "warnings"} | {"warnings": out["warnings"][:10]}
+    except Exception as exc:  # noqa: BLE001 - reported to the user, main import still succeeds
+        return {"error": f"Historical data import failed: {exc}"}
+
+
 def create_app(db_path: Path | None = None) -> FastAPI:
     app = FastAPI(title=config.APP_NAME, default_response_class=SafeJSON)
     db = Database(db_path)
@@ -118,12 +131,28 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                 rep = run_import(db, log=logs.append)
         except (ImportErrorMatchEdge, OSError) as exc:
             raise HTTPException(502, f"Import failed: {exc}. Logs: {' | '.join(logs)}")
+        # a local-folder import is an offline action: do not download historical seasons with it
+        hist = {"skipped": True} if body.get("local_path") else run_history_import(db, logs)
         engine.refresh()
         settle = auto_settle(db)
-        return {"ok": True, "method": rep.method, "commit_sha": rep.commit_sha, "generated_utc": rep.generated_utc,
+        return {"ok": True, "history": hist, "method": rep.method, "commit_sha": rep.commit_sha, "generated_utc": rep.generated_utc,
                 "competitions": rep.competitions, "results": rep.results, "fixtures": rep.fixtures,
-                "snapshot_prices": rep.snapshot_prices, "warnings": rep.warnings[:50],
+                "snapshot_prices": rep.snapshot_prices, "archived_prices": rep.archived_prices,
+                "warnings": rep.warnings[:50],
                 "unlinked_teams": rep.unlinked_teams, "log": logs, "settlement": settle}
+
+    @app.post("/api/history/import")
+    def history_import():
+        out = run_history_import(db)
+        if "error" in out:
+            raise HTTPException(502, out["error"])
+        engine.refresh()
+        return out
+
+    @app.get("/api/history/status")
+    def history_status():
+        from .history import status as hstatus
+        return hstatus(db)
 
     @app.get("/api/import/runs")
     def import_runs():
@@ -204,8 +233,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             params.append(source)
         return db.query(sql + " ORDER BY created_at DESC LIMIT 2000", tuple(params))
 
-    @app.post("/api/odds")
-    def add_odds(body: OddsIn):
+    def insert_odds(body: OddsIn) -> int:
         require_match(body.match_id)
         if body.market not in VALID_SELECTIONS:
             raise HTTPException(422, f"Unknown market {body.market}. Use one of {sorted(VALID_SELECTIONS)}")
@@ -219,14 +247,62 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             raise HTTPException(422, "Lines must be in steps of 0.25.")
         zone = str(db.get_settings()["timezone"])
         checked = local_input_to_utc(body.checked_at, zone) if body.checked_at else now_utc()
-        oid = db.execute("INSERT INTO odds(match_id, bookmaker, market, selection, line, odds, checked_at, source, "
-                         "note, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                         (body.match_id, body.bookmaker.strip(), body.market, body.selection, body.line, body.odds,
-                          iso(checked), "manual", body.note, iso(now_utc())))
+        return db.execute("INSERT INTO odds(match_id, bookmaker, market, selection, line, odds, checked_at, source, "
+                          "note, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                          (body.match_id, body.bookmaker.strip(), body.market, body.selection, body.line, body.odds,
+                           iso(checked), "manual", body.note, iso(now_utc())))
+
+    @app.post("/api/odds")
+    def add_odds(body: OddsIn):
+        oid = insert_odds(body)
         engine.invalidate()
         return db.one("SELECT * FROM odds WHERE id=?", (oid,)) | {
             "key": selection_key(body.market, body.selection, body.line),
             "notice": "Saved as a manually entered price. It is not a verified live price."}
+
+    @app.post("/api/odds/parse")
+    def parse_odds(body: dict = Body(...)):
+        from .oddsparse import Fixture, parse_odds_text
+        text = str(body.get("text") or "")
+        if len(text) > 200_000:
+            raise HTTPException(413, "Text too long.")
+        settings_ = db.get_settings()
+        zone = str(settings_["timezone"])
+        if body.get("match_id"):
+            m = require_match(body["match_id"])
+            fixtures = [Fixture(m["id"], m["home"], m["away"])]
+        else:
+            from .engine.plan import today_local
+            d0 = body.get("date_from") or today_local(zone).isoformat()
+            d1 = body.get("date_to") or (date.fromisoformat(d0) + timedelta(days=7)).isoformat()
+            fixtures = [Fixture(f["id"], f["home"], f["away"])
+                        for f in engine.list_fixtures(d0, d1, include_ineligible=False)]
+        res = parse_odds_text(text, fixtures, body.get("match_id"))
+        return {"rows": res.rows, "ignored": res.ignored, "warnings": res.warnings, "fixtures_considered": len(fixtures),
+                "notice": "Review every row before saving. Prices are saved as manual entries checked at the time you give."}
+
+    @app.post("/api/odds/bulk")
+    def bulk_odds(body: dict = Body(...)):
+        rows = body.get("rows") or []
+        if not rows:
+            raise HTTPException(422, "No rows to save.")
+        saved, errors = 0, []
+        for k, r in enumerate(rows):
+            try:
+                insert_odds(OddsIn(match_id=r["match_id"], bookmaker=body.get("bookmaker") or "Bet365",
+                                   market=r["market"], selection=r["selection"], line=r.get("line"),
+                                   odds=float(r["odds"]), checked_at=body.get("checked_at"),
+                                   note="pasted from bookmaker text"))
+                saved += 1
+            except (HTTPException, ValueError, KeyError) as exc:
+                errors.append(f"Row {k + 1}: {getattr(exc, 'detail', exc)}")
+        engine.invalidate()
+        return {"saved": saved, "errors": errors}
+
+    @app.get("/api/odds/history")
+    def odds_history(match_id: str):
+        return db.query("SELECT * FROM odds_history WHERE match_id=? ORDER BY market, selection, line, captured_at",
+                        (match_id,))
 
     @app.delete("/api/odds/{odds_id}")
     def del_odds(odds_id: int):
@@ -383,6 +459,44 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     @app.get("/api/performance")
     def perf():
         return performance(db)
+
+    @app.get("/api/league-strength")
+    def league_strength():
+        from .engine.strength import table
+        if not engine.strengths:
+            return {"leagues": [], "n_matches": 0}
+        names = {c: v.get("name", c) for c, v in engine.store.competitions.items()}
+        return {"leagues": table(engine.strengths, names), "n_matches": engine.strengths["n_matches"],
+                "sigma": engine.strengths["sigma"],
+                "note": "Learned from this season's Champions/Europa/Conference League matches. Strength is on a log "
+                        "goal scale: the goal factor is how many more goals an average team from that league would "
+                        "score against an average team from a 0.00 league, all else equal. Few matches = close to 0 "
+                        "and wide uncertainty.",
+                "validation": "Walk-forward on 124 UEFA matches this season: log loss 1.658 (league strength) vs "
+                              "1.678 (previous 50% shrinkage); lower is better."}
+
+    @app.post("/api/backtest")
+    def backtest_start(body: dict = Body(default={})):
+        from .engine.plan_backtest import backtest_competitions, start_backtest
+        from .history import season_codes
+        s = db.get_settings()
+        seasons = body.get("seasons") or [x for x in season_codes(int(s["history_seasons"])) if x != config.SEASON]
+        targets = parse_targets(body.get("targets") or s["plan_targets"])
+        comps, skipped = backtest_competitions(weekend_competitions(s, engine.store.competitions))
+        if not comps:
+            raise HTTPException(400, "None of the weekend leagues are covered by football-data.co.uk.")
+        if not any(m.get("season") in seasons for c in comps for m in engine.store.by_comp.get(c, [])):
+            raise HTTPException(400, "No historical seasons loaded. Run the import (Data sources) first.")
+        try:
+            rid = start_backtest(db, engine.store, s, sorted(seasons), targets, comps)
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+        return {"id": rid, "competitions": comps, "not_covered": skipped}
+
+    @app.get("/api/backtest")
+    def backtest_latest():
+        from .engine.plan_backtest import latest_backtest
+        return latest_backtest(db) or {}
 
     _check_cache: dict = {}
 

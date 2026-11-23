@@ -43,7 +43,13 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "min_matches_stat": 5,  # per team, below this a statistic is flagged as a small sample
     "goal_cap": 5,  # goals per team per match counted when estimating ratings (extreme results)
     "min_league_matches": 30,  # competition matches needed for a reliable league baseline
-    "cross_league_shrink": 0.5,  # how much domestic ratings are trusted in cross-league fixtures
+    "cross_league_shrink": 0.5,
+    # --- historical seasons (football-data.co.uk) ---
+    "history_enabled": True,
+    "history_seasons": 5,  # completed seasons to download
+    # weight of a previous-season match relative to a current-season one; 0.75 gave the lowest walk-forward
+    # log loss on 2025/26 and 2026/27 (no history: 0.6528 early-season log loss in 2025/26 → 0.6459)
+    "history_carryover": 0.75,  # how much domestic ratings are trusted in cross-league fixtures
     # --- selection / rejection ---
     "min_leg_probability": 0.60,
     "min_leg_odds": 1.30,  # shorter prices add almost nothing to a ticket but still carry full risk

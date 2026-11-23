@@ -89,6 +89,26 @@ half-life 8/16/∞. Prior 4 / half-life 8 (the first version) was overconfident 
 predictions of 80 %+; prior 12 / half-life 16 had the lowest log loss and ~1 point. Choosing two
 parameters on the same season is mild in-sample tuning — keep watching the check as data grows.
 
+**Previous season (football-data.co.uk).** For league fixtures the model also uses the team's
+matches from the previous season in the same competition, each weighted by `history_carryover`
+(0.75) on top of the recency decay — squads change in summer. Descriptive statistics and hit rates
+stay current-season only. Walk-forward log loss (1X2 + Over 2.5 + BTTS, early-season matches):
+2025/26 0.6528 → 0.6459, 2026/27 0.6370 → 0.6343; later in the season the gain is small.
+Promoted teams have no previous-season matches in their new league and rely on shrinkage.
+
+**League strength for UEFA fixtures** (`engine/strength.py`). Each team is rated inside its own
+domestic league; each league gets a strength S_L learned from this season's Champions/Europa/
+Conference League results by penalised Poisson maximum likelihood (Normal(0, 0.35²) prior):
+`λ_home = μ_home·att·def·exp((S_home − S_away)/2)`, `λ_away = μ_away·att·def·exp((S_away − S_home)/2)`.
+The posterior variance of the gap is added to each λ's uncertainty, so leagues with few European
+matches get wide ranges. Walk-forward on 124 UEFA matches: log loss 1.658 vs 1.678 for the previous
+fixed 50 % shrinkage. Domestic cups between divisions keep the shrinkage method (lower divisions
+never meet in Europe; fitting them from cup ties produced implausible orderings).
+
+**Profit backtest** (`engine/plan_backtest.py`): see README. The key finding — selected legs won 60 %
+vs 70 % expected and 61 % implied — shows the model's edge over Bet365 is not real on the main
+markets: choosing bets where the model disagrees most with the bookmaker mostly selects model errors.
+
 ### Known limitations
 
 * Independence ignores the small negative/positive correlation of the two teams' goals and

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, enc, qs, type Report } from "../api";
+import PasteOdds from "../components/PasteOdds";
 import ReportView from "../components/Report";
 import { Chip, CompetitionPicker, ErrorBox, Loading, Panel, StatusChip, useFetch } from "../components/ui";
 import { addDays, fmtOdds, smallPct, todayLocal } from "../format";
@@ -155,6 +156,10 @@ export default function WeeklyPlan() {
       {plan.loading && !plan.data ? <Loading label="Analysing every fixture in the week and building the tickets…" /> : plan.data && (
         <div className="stack">
           {plan.loading && <Loading label="Rebuilding…" />}
+          <details className="panel" style={{ padding: 12 }}>
+            <summary style={{ cursor: "pointer", fontWeight: 650 }}>Paste Bet365 odds for this week</summary>
+            <div style={{ marginTop: 8 }}><PasteOdds dateFrom={week} dateTo={addDays(week, 6)} onSaved={plan.reload} /></div>
+          </details>
           <div className="notice small">{plan.data.note} Prices marked “snapshot” are dataset quotes, not live Bet365 prices — re-check them, or enter your own on the match page and press Rebuild.</div>
           {plan.data.slots.map((s: G) => <Slot key={s.id} slot={s} weekStart={plan.data!.week_start} />)}
         </div>

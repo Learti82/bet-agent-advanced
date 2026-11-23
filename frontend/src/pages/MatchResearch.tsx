@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, enc, qs, type Analysis, type Candidate, type Factor, type Fixture } from "../api";
+import PasteOdds from "../components/PasteOdds";
 import { Chip, Empty, ErrorBox, FormSeq, Loading, Panel, StatusChip, useFetch } from "../components/ui";
 import { RISK_TONE, TIME_LABEL, addDays, fmtOdds, hr, nowLocalInput, pct, todayLocal } from "../format";
 import { useTicket } from "../ticket";
@@ -421,6 +422,11 @@ function OddsTab({ a, onSaved }: { a: Analysis; onSaved: () => void }) {
   return (
     <div className="stack">
       <div className="notice info small">Enter prices exactly as shown by your bookmaker, with the time you checked. MatchEdge never logs in to Bet365, stores no credentials and never treats your entries as verified live odds. Dataset snapshot prices (Flashscore pre-match quotes published by Open-Matchday) are shown separately and labelled.</div>
+      <details open className="panel" style={{ padding: 10 }}>
+        <summary style={{ cursor: "pointer", fontWeight: 600 }}>Paste from Bet365</summary>
+        <div style={{ marginTop: 8 }}><PasteOdds matchId={fx.id} onSaved={() => { reload(); onSaved(); }} /></div>
+      </details>
+      <h3>Enter one price</h3>
       <div className="form-grid">
         <label className="f">Bookmaker<input value={form.bookmaker} onChange={(e) => setForm({ ...form, bookmaker: e.target.value })} /></label>
         <label className="f">Market<select value={form.market} onChange={(e) => { const m = markets?.find((x) => x.market === e.target.value); setForm({ ...form, market: e.target.value, selection: m?.selections[0] ?? "" }); }}>{markets?.map((m) => <option key={m.market} value={m.market}>{m.name}</option>)}</select></label>
@@ -438,11 +444,34 @@ function OddsTab({ a, onSaved }: { a: Analysis; onSaved: () => void }) {
         <table className="tbl"><thead><tr><th>Market</th><th>Selection</th><th className="num">Line</th><th className="num">Odds</th><th>Bookmaker</th><th>Checked (UTC)</th><th></th></tr></thead>
           <tbody>{manual.map((o) => <tr key={o.id}><td>{o.market}</td><td>{o.selection}</td><td className="num">{o.line ?? ""}</td><td className="num"><b>{fmtOdds(o.odds)}</b></td><td>{o.bookmaker}</td><td className="num small">{o.checked_at}</td><td><button className="sm ghost danger" onClick={() => del(o.id)}>Delete</button></td></tr>)}</tbody></table>
       )}
+      <PriceHistory matchId={fx.id} />
       <details><summary className="muted small">Dataset snapshot prices ({snap.length}) — reference only, not live</summary>
         <table className="tbl" style={{ marginTop: 6 }}><thead><tr><th>Market</th><th>Selection</th><th className="num">Line</th><th className="num">Odds</th><th>Bookmaker</th><th>Snapshot (UTC)</th></tr></thead>
           <tbody>{snap.slice(0, 200).map((o) => <tr key={o.id}><td>{o.market}</td><td>{o.selection}</td><td className="num">{o.line ?? ""}</td><td className="num">{fmtOdds(o.odds)}</td><td>{o.bookmaker}</td><td className="num small">{o.checked_at}</td></tr>)}</tbody></table>
       </details>
     </div>
+  );
+}
+
+function PriceHistory({ matchId }: { matchId: string }) {
+  const { data } = useFetch<Analysis[]>(`/api/odds/history?match_id=${enc(matchId)}`, [matchId]);
+  const groups = new Map<string, Analysis[]>();
+  (data ?? []).filter((r) => r.bookmaker.toLowerCase() === "bet365").forEach((r) => {
+    const k = `${r.market} ${r.selection} ${r.line ?? ""}`.trim();
+    groups.set(k, [...(groups.get(k) ?? []), r]);
+  });
+  const moved = [...groups.entries()].filter(([, v]) => v.length > 1);
+  return (
+    <details>
+      <summary className="muted small">Bet365 price movement from daily snapshots ({moved.length} selections moved)</summary>
+      {moved.length === 0 ? <p className="small muted" style={{ marginTop: 6 }}>No movement recorded yet. Each import archives changed prices; history builds up day by day.</p> : (
+        <table className="tbl" style={{ marginTop: 6 }}><thead><tr><th>Selection</th><th>Price path (oldest → newest)</th><th className="num">Change</th></tr></thead>
+          <tbody>{moved.map(([k, v]) => {
+            const first = v[0].odds, last = v[v.length - 1].odds;
+            return <tr key={k}><td>{k}</td><td className="num small">{v.map((x) => `${fmtOdds(x.odds)} (${x.captured_at.slice(5, 10)})`).join(" → ")}</td><td className="num" style={{ color: last < first ? "var(--bad)" : "var(--good)" }}>{last < first ? "shortened" : "drifted"} {Math.round(100 * (last / first - 1))}%</td></tr>;
+          })}</tbody></table>
+      )}
+    </details>
   );
 }
 

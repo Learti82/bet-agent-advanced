@@ -71,9 +71,40 @@ estimated chance of every leg winning next to the bookmaker's implied chance.
 Routine: import data → open Weekly plan → enter your own Bet365 prices for the listed legs (or
 replace snapshot prices) → **Rebuild** → **Save & track** the tickets you place.
 
+### Pasting odds from Bet365
+
+Typing prices is the slowest part of the routine, so you can paste them instead. On the Bet365 page,
+select a market (heading, selections and prices) or a whole coupon list, copy, and paste into
+**Paste from Bet365** on a match's Odds tab, or into the bulk box on the Weekly plan page. The
+parser understands match lines ("Arsenal v Dortmund"), coupon layouts (two team lines followed by
+three prices), the common market headings, Over/Under lines, Asian lines like "-0.5,-1.0", and
+decimal, fractional and EVS prices. Every recognised price is shown in a preview with the text it
+came from; you untick or correct anything, then save. Unsupported markets (correct score,
+scorers…) and lines it cannot read are listed, never guessed. Nothing logs in to Bet365.
+
+### Profit backtest, closing-line value and the model check (Historical performance)
+
+* **Profit backtest** replays the weekend plan for every weekend of the last five seasons using
+  only data available before each match and Bet365's real pre-match prices. First run (204 weekends,
+  2021/22–2025/26): the selected legs won **60%** while the model expected 70% and Bet365's prices
+  implied 61%; as singles they returned about −2% per bet, beat the closing price only 39% of the
+  time, and the weekend tickets returned about −7.5%. **On these markets the model shows no edge
+  over Bet365** — treat its probabilities as research input, not as an advantage. Historical prices
+  exist only for 1X2, Over/Under 2.5 and the main Asian line, and UEFA matches are not in the files.
+* **Closing-line value** compares the price you took with Bet365's closing price (true close from
+  football-data for 1X2, Over/Under 2.5 and the main Asian line; otherwise the last daily snapshot,
+  marked approximate). Consistently positive CLV is the earliest reliable sign of a real edge.
+* **Odds archive**: every import archives changed snapshot prices, so each match shows Bet365's
+  price movement and CLV becomes available for more markets over time.
+* **League strength** for Champions/Europa/Conference League matches is learned from this season's
+  European results (see docs/MODEL.md); walk-forward on 124 UEFA matches it predicted better than
+  the old fixed shrinkage (log loss 1.658 vs 1.678).
+
 ### Daily routine
 
 1. **Data sources → Download & import latest** (the dataset is rebuilt upstream every day at 00:00 UTC).
+   The first import also downloads five past seasons from football-data.co.uk (about 130 small files,
+   1–2 minutes); later imports only refresh the current season.
 2. **Upcoming fixtures**: pick a date. Verify kickoff times you intend to use on the official site.
 3. **Match research**: enter your Bet365 prices (Odds tab) and any research (Research tab).
 4. **Accumulator builder**: click selections into the slip, or auto-build toward your target.
@@ -99,6 +130,7 @@ Development with hot reload: run `python -m matchedge serve` in `backend/` and `
 | | Source | How it is used |
 |---|---|---|
 | **A** | [Open-Matchday](https://github.com/oladeeayo/open-matchday) CSVs (75 competitions, 2026/27) | Downloaded and validated locally: fixtures, results, half-time scores, shots, fouls, cards, corners, goal minutes. |
+| **A2** | [football-data.co.uk](https://www.football-data.co.uk/) CSVs (22 European divisions, current + 5 past seasons) | Results, stats, referees and Bet365 opening/closing odds. Feeds previous-season form, the profit backtest and closing-line value. Free for personal, non-commercial use; kept on your computer. |
 | **B** | Public statistics sites such as [footiqo.com](https://footiqo.com/) | **Not scraped.** Each match page generates links; you read the page and paste the statistic with the URL and time you checked. |
 | **C** | Bet365 prices | **Manual entry only.** No login automation, no credentials stored, never labelled as live odds. |
 | **D** | Your research notes | URL, statistic, value, notes, time checked, reliability, effect on a market. Multiple per match. |

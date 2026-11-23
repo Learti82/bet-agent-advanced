@@ -12,6 +12,25 @@ function cov(x: number | undefined) {
   return <span style={{ color: v >= 80 ? "var(--good)" : v >= 30 ? "var(--warn)" : "var(--bad)" }}>{v}%</span>;
 }
 
+function HistoryCard({ onDone }: { onDone: () => void }) {
+  const st = useFetch<G>("/api/history/status");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true); setErr(null);
+    try { await api("/api/history/import", { method: "POST" }); st.reload(); onDone(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+  const last = st.data?.last_import;
+  return (
+    <Panel title="Source A2 — football-data.co.uk" sub="historical seasons, Bet365 opening & closing odds" actions={<button onClick={run} disabled={busy}>{busy ? "Downloading…" : "Update"}</button>}>
+      <p className="small">Free CSVs for 22 European divisions: results, statistics, referees and Bet365 prices (1X2, Over/Under 2.5, Asian handicap; opening and closing). Used for previous-season form in the model, the profit backtest and closing-line value. Refreshed with every import; completed seasons are downloaded once. Free for personal, non-commercial use — credit football-data.co.uk; files stay on this computer.</p>
+      {last && <p className="small muted">Last update {last.finished_at ?? last.started_at} · {last.status} · {last.rows ?? 0} matches · {(last.warnings?.unlinked ?? []).length} current-season teams not linked to Open-Matchday names{last.error ? ` · ${last.error}` : ""}</p>}
+      {st.data?.seasons?.length > 0 && <table className="tbl"><thead><tr><th>Season</th><th className="num">Matches</th><th className="num">With Bet365 odds</th><th className="num">With closing odds</th></tr></thead><tbody>{st.data!.seasons.map((x: G) => <tr key={x.season}><td>20{x.season.slice(0, 2)}/{x.season.slice(2)}</td><td className="num">{x.n}</td><td className="num">{x.odds}</td><td className="num">{x.closing}</td></tr>)}</tbody></table>}
+      <ErrorBox error={err} />
+    </Panel>
+  );
+}
+
 export default function DataSources() {
   const { status, reloadStatus } = useStatus();
   const comps = useFetch<Competition[]>("/api/competitions");
@@ -55,6 +74,7 @@ export default function DataSources() {
           {result && <div className="notice good small" style={{ marginTop: 8 }}>Imported {result.competitions ?? ""} competitions · {result.results} results · {result.fixtures} fixtures{result.snapshot_prices != null ? ` · ${result.snapshot_prices} snapshot prices` : ""}. {result.settlement ? `Settled ${result.settlement.settled} predictions.` : ""}{result.warnings?.length ? ` ${result.warnings.length} warnings.` : ""}</div>}
         </Panel>
         <div className="stack">
+          <HistoryCard onDone={() => { comps.reload(); runs.reload(); }} />
           <Panel title="Source B — Public statistics websites (manual)">
             <p className="small">Sites such as <a href="https://footiqo.com/" target="_blank" rel="noreferrer">footiqo.com</a> are used as supporting research. MatchEdge does not scrape them: each match page generates links, you check the page yourself, and paste the relevant statistic with the URL and time checked. Those entries appear as evidence in the analysis.</p>
           </Panel>

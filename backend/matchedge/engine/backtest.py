@@ -25,18 +25,28 @@ MARKETS = {
 BINS = [(0.5, 0.6), (0.6, 0.7), (0.7, 0.8), (0.8, 0.9), (0.9, 1.0001)]
 
 
-def model_check(store, settings: dict, min_history: int = 6) -> dict:
+def model_check(store, settings: dict, min_history: int = 6, season: str | None = None,
+                use_history: bool = True) -> dict:
+    """Walk-forward predictions for ``season`` (default: the current one)."""
+    from .. import config
+    from .data import prev_season
+    season = season or config.SEASON
+    seasons = {season, prev_season(season)} if use_history else {season}
     data: dict[str, list[tuple[float, bool]]] = {k: [] for k in MARKETS}
     n_matches = 0
     for code, ms in store.by_comp.items():
-        if store.competitions.get(code, {}).get("kind") != "league":
+        if store.competitions.get(code, {}).get("kind", "league") != "league":
             continue
         for m in ms:
-            hr = store.history(m["home_key"], m["date_obj"], {code})
-            ar = store.history(m["away_key"], m["date_obj"], {code})
-            if len(hr) < min_history or len(ar) < min_history:
+            if m.get("season") != season:
                 continue
-            g = fit_match(store, hr, ar, code, m["date_obj"], settings, False)
+            cur_h = store.history(m["home_key"], m["date_obj"], {code}, {season})
+            cur_a = store.history(m["away_key"], m["date_obj"], {code}, {season})
+            if len(cur_h) < min_history or len(cur_a) < min_history:
+                continue
+            hr = store.history(m["home_key"], m["date_obj"], {code}, seasons)
+            ar = store.history(m["away_key"], m["date_obj"], {code}, seasons)
+            g = fit_match(store, hr, ar, code, m["date_obj"], settings, False, season)
             if not g.available:
                 continue
             n_matches += 1
@@ -70,7 +80,8 @@ def model_check(store, settings: dict, min_history: int = 6) -> dict:
             "n": len(hi), "predicted": round(sum(p for p, _ in hi) / len(hi), 3),
             "actual": round(sum(o for _, o in hi) / len(hi), 3)},
         "markets": markets,
-        "settings": {k: settings[k] for k in ("prior_weight", "recency_half_life", "goal_cap")},
+        "season": season, "uses_previous_season": use_history,
+        "settings": {k: settings.get(k) for k in ("prior_weight", "recency_half_life", "goal_cap", "history_carryover")},
         "note": "Walk-forward: each prediction uses only earlier matches. In-season data only; bookmaker prices "
                 "are not available historically, so this checks calibration, not profitability.",
     }

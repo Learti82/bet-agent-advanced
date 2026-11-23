@@ -87,6 +87,14 @@ def find_result(db: Database, pred: dict) -> dict | None:
 
 
 def auto_settle(db: Database) -> dict:
+    from .clv import update_clv
+    clv = update_clv(db)
+    out = _settle(db)
+    out["clv_updated"] = clv["updated"]
+    return out
+
+
+def _settle(db: Database) -> dict:
     pending = db.query("SELECT * FROM predictions WHERE status='pending'")
     settled, manual = 0, 0
     for p in pending:
@@ -177,6 +185,12 @@ def performance(db: Database) -> dict:
             "about the model yet." if n_settled < 50 else
             "Sample is still modest; compare predicted vs actual with the confidence bands before drawing conclusions."
             if n_settled < 300 else "Larger sample; calibration bands are becoming informative.")
-    return {"overall": overall, "by_family": by_family, "by_odds": by_odds, "calibration": calibration,
+    from .clv import clv_summary
+    clv = {"overall": clv_summary(rows),
+           "by_family": {fam: clv_summary([r for r in rows if FAMILY_OF_MARKET.get(r["market"]) == fam])
+                         for fam in ("goals", "corners", "cards", "result", "handicap")},
+           "note": "CLV = your odds ÷ closing odds − 1. Consistently positive CLV is the best early evidence of an "
+                   "edge; it needs far fewer bets than win/loss results to mean something (roughly 50–100+)."}
+    return {"clv": clv, "overall": overall, "by_family": by_family, "by_odds": by_odds, "calibration": calibration,
             "tickets": tstat, "sample_note": note,
             "disclaimer": "Historical tracking only. No claim is made that the model is improving unless the data shows it."}

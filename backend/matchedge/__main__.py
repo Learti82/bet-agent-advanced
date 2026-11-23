@@ -39,6 +39,8 @@ def main(argv: list[str] | None = None) -> int:
               f"{rep.snapshot_prices} snapshot prices (method {rep.method}, dataset built {rep.generated_utc}).")
         for w in rep.warnings[:20]:
             print("  warning:", w)
+        from .main import run_history_import
+        print("Historical seasons (football-data.co.uk):", run_history_import(db))
         from .engine.tracking import auto_settle
         print("Settlement:", auto_settle(db))
         return 0

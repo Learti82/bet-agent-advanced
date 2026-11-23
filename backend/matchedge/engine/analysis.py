@@ -27,6 +27,7 @@ class Engine:
         self.db = db
         self._lock = threading.RLock()
         self.store: MatchStore | None = None
+        self.strengths: dict | None = None
         self.version = 0
         self._cache: dict[str, dict] = {}
         self.refresh()
@@ -35,10 +36,19 @@ class Engine:
     def refresh(self) -> None:
         with self._lock:
             matches = self.db.query("SELECT * FROM matches")
+            settings = self.db.get_settings()
+            if settings.get("history_enabled", True):
+                from ..history import history_rows
+                matches = matches + history_rows(self.db)
             comps = self.db.query("SELECT * FROM competitions")
             for c in comps:
                 c["coverage"] = json.loads(c["coverage"]) if c.get("coverage") else {}
             self.store = MatchStore.build(matches, comps)
+            from .strength import fit_strengths
+            try:
+                self.strengths = fit_strengths(self.store, settings)
+            except Exception:  # noqa: BLE001 - never block the app; cross-league falls back to shrinkage
+                self.strengths = None
             self.invalidate()
 
     def invalidate(self) -> None:
@@ -104,7 +114,7 @@ class Engine:
         out = []
         team_l = (team or "").strip().lower()
         for m in self.store.matches.values():
-            if not (start <= m["date"] <= end):
+            if m["id"].startswith("FD|") or not (start <= m["date"] <= end):
                 continue
             if competitions and m["competition"] not in competitions:
                 continue
@@ -136,13 +146,23 @@ class Engine:
             self._cache[match_id] = result
             return result
 
-    def _select_history(self, team_id: str, comp: str, before: date, settings: dict) -> tuple[list, bool]:
+    def _select_history(self, team_id: str, comp: str, before: date, settings: dict,
+                        season: str) -> tuple[list, list, bool]:
+        """(rows for the model, current-season rows for descriptive stats, same-competition flag).
+
+        League fixtures use the same competition; the model also sees the previous season's matches in
+        that competition (down-weighted). Cups/UEFA use all of the current season's competitions.
+        """
+        from .data import prev_season
         kind = self.store.competitions.get(comp, {}).get("kind")
         if kind == "league":
-            rows = self.store.history(team_id, before, {comp})
-            if len(rows) >= int(settings["min_matches_model"]):
-                return rows, True
-        return self.store.history(team_id, before), False
+            cur = self.store.history(team_id, before, {comp}, {season})
+            if len(cur) >= int(settings["min_matches_model"]) or settings.get("history_enabled", True):
+                model = self.store.history(team_id, before, {comp}, {season, prev_season(season)})
+                if len(cur) >= int(settings["min_matches_model"]) or len(model) >= int(settings["min_matches_model"]) + 4:
+                    return model, cur, True
+        cur = self.store.history(team_id, before, None, {season})
+        return cur, cur, False
 
     def _analyze(self, match_id: str) -> dict:
         store = self.store
@@ -155,10 +175,11 @@ class Engine:
         fixture = self.fixture_view(m, ov, settings, counts=counts)
         comp = m["competition"]
         before = m["date_obj"]
-        home_rows, same_h = self._select_history(m["home_key"], comp, before, settings)
-        away_rows, same_a = self._select_history(m["away_key"], comp, before, settings)
+        season = m.get("season") or config.SEASON
+        home_model, home_rows, same_h = self._select_history(m["home_key"], comp, before, settings, season)
+        away_model, away_rows, same_a = self._select_history(m["away_key"], comp, before, settings, season)
         kind = store.competitions.get(comp, {}).get("kind")
-        prim_h, prim_a = store.primary_league(m["home_key"]), store.primary_league(m["away_key"])
+        prim_h, prim_a = store.primary_league(m["home_key"], season), store.primary_league(m["away_key"], season)
         cross_league = kind != "league" and (prim_h is None or prim_a is None or prim_h != prim_a)
         unlinked = [t for t, tid in ((m["home"], m["home_key"]), (m["away"], m["away_key"]))
                     if tid.startswith("UEFA:")]
@@ -166,7 +187,17 @@ class Engine:
         home_p = team_profile(home_rows, "H", min_stat)
         away_p = team_profile(away_rows, "A", min_stat)
 
-        goals = fit_match(store, home_rows, away_rows, comp, before, settings, cross_league)
+        strength = None
+        if cross_league and kind == "international" and prim_h and prim_a and self.strengths \
+                and prim_h in self.strengths["index"] and prim_a in self.strengths["index"]:
+            from .data import prev_season
+            from .strength import strength_delta
+            dom_h = store.history(m["home_key"], before, {prim_h}, {season, prev_season(season)})
+            dom_a = store.history(m["away_key"], before, {prim_a}, {season, prev_season(season)})
+            if sum(r.season == season for r in dom_h) >= 3 and sum(r.season == season for r in dom_a) >= 3:
+                strength = strength_delta(self.strengths, prim_h, prim_a)
+                home_model, away_model = dom_h, dom_a
+        goals = fit_match(store, home_model, away_model, comp, before, settings, cross_league, season, strength)
         corners = count_model("corners", store, home_rows, away_rows, comp, before, settings)
         cards = count_model("cards", store, home_rows, away_rows, comp, before, settings)
         goals_d = goals.to_dict()

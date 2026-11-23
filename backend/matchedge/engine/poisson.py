@@ -50,12 +50,16 @@ def league_baseline(store: MatchStore, code: str, before, min_matches: int) -> B
     return store.memo[key]
 
 
+BASELINE_WINDOW_DAYS = 400  # roughly the current and the previous season
+
+
 def _league_baseline(store: MatchStore, code: str, before, min_matches: int) -> Baseline:
-    rows = store.comp_results(code, before)
+    rows = store.comp_results(code, before, BASELINE_WINDOW_DAYS)
     if len(rows) >= min_matches:
-        return Baseline(sum(m["ft_home"] for m in rows) / len(rows),
-                        sum(m["ft_away"] for m in rows) / len(rows), len(rows), code)
-    pooled = [m for ms in store.by_comp.values() for m in ms if m["date_obj"] < before]
+        # floor at 0.25 goals: a tiny or degenerate sample must never produce a zero baseline
+        return Baseline(max(0.25, sum(m["ft_home"] for m in rows) / len(rows)),
+                        max(0.25, sum(m["ft_away"] for m in rows) / len(rows)), len(rows), code)
+    pooled = [m for code2 in store.by_comp for m in store.comp_results(code2, before, BASELINE_WINDOW_DAYS)]
     if not pooled:
         return Baseline(1.45, 1.15, 0, "default")
     return Baseline(sum(m["ft_home"] for m in pooled) / len(pooled),
@@ -77,20 +81,21 @@ def _first_half_share(store: MatchStore, code: str, before, min_matches: int) ->
         ht = sum(m["ht_home"] + m["ht_away"] for m in rows)
         return (ht / ft if ft else None), len(rows)
 
-    s, n = share(store.comp_results(code, before))
+    s, n = share(store.comp_results(code, before, BASELINE_WINDOW_DAYS))
     if s is not None and n >= min_matches:
         return s, n, code
-    s, n = share([m for ms in store.by_comp.values() for m in ms if m["date_obj"] < before])
+    s, n = share([m for c2 in store.by_comp for m in store.comp_results(c2, before, BASELINE_WINDOW_DAYS)])
     if s is not None and n >= min_matches:
         return s, n, "pooled"
     return None, n, "unavailable"
 
 
 def team_rating(rows: list[TeamRow], store: MatchStore, before, settings: dict,
-                cache: dict[str, Baseline]) -> dict:
+                cache: dict[str, Baseline], season: str | None = None) -> dict:
     half_life = float(settings["recency_half_life"])
     k = float(settings["prior_weight"])
     cap = int(settings["goal_cap"])
+    carry = float(settings.get("history_carryover", 0.5))
     min_league = int(settings["min_league_matches"])
     sw = sw2 = att_num = def_num = g_for = g_against = 0.0
     capped = 0
@@ -100,6 +105,8 @@ def team_rating(rows: list[TeamRow], store: MatchStore, before, settings: dict,
         b = cache[r.competition]
         mu_for, mu_against = (b.home, b.away) if r.venue == "H" else (b.away, b.home)
         w = 0.5 ** (i / half_life) if half_life > 0 else 1.0
+        if season is not None and r.season != season:
+            w *= carry  # previous-season match: squads and managers change over the summer
         gf, ga = min(r.gf, cap), min(r.ga, cap)
         capped += int(r.gf > cap) + int(r.ga > cap)
         att_num += w * gf / mu_for
@@ -224,25 +231,36 @@ class GoalModel:
 
 
 def fit_match(store: MatchStore, home_rows: list[TeamRow], away_rows: list[TeamRow], comp: str, before,
-              settings: dict, cross_league: bool) -> GoalModel:
+              settings: dict, cross_league: bool, season: str | None = None,
+              strength: dict | None = None) -> GoalModel:
     min_n = int(settings["min_matches_model"])
-    if len(home_rows) < min_n or len(away_rows) < min_n:
+    cur_h = [r for r in home_rows if season is None or r.season == season]
+    cur_a = [r for r in away_rows if season is None or r.season == season]
+    if len(cur_h) + 0.5 * (len(home_rows) - len(cur_h)) < min_n or len(cur_a) + 0.5 * (len(away_rows) - len(cur_a)) < min_n:
         return GoalModel(False, f"Insufficient data: model needs ≥{min_n} matches per team "
                                 f"(home {len(home_rows)}, away {len(away_rows)}).")
     cache: dict[str, Baseline] = {}
     base = league_baseline(store, comp, before, int(settings["min_league_matches"]))
-    rh = team_rating(home_rows, store, before, settings, cache)
-    ra = team_rating(away_rows, store, before, settings, cache)
-    s = float(settings["cross_league_shrink"]) if cross_league else 1.0
+    rh = team_rating(home_rows, store, before, settings, cache, season)
+    ra = team_rating(away_rows, store, before, settings, cache, season)
+    # cross-league: with a fitted league-strength difference, ratings stay as measured in each domestic
+    # league and the strength gap is applied explicitly; otherwise fall back to crude shrinkage.
+    s = 1.0 if (not cross_league or strength) else float(settings["cross_league_shrink"])
     att_h, def_h = 1 + s * (rh["attack"] - 1), 1 + s * (rh["defence"] - 1)
     att_a, def_a = 1 + s * (ra["attack"] - 1), 1 + s * (ra["defence"] - 1)
     lh = att_h * def_a * base.home
     la = att_a * def_h * base.away
+    if strength:
+        lh *= math.exp(strength["delta"] / 2)
+        la *= math.exp(-strength["delta"] / 2)
     # Relative standard error of each λ: Poisson counting error of the (weighted) goals behind each
     # rating, including the k pseudo-matches of the shrinkage prior (Gamma-Poisson posterior).
     kh, ka = float(settings["prior_weight"]) * base.home, float(settings["prior_weight"]) * base.away
     eh = min(0.6, math.sqrt(1 / (rh["weighted_goals_for"] + kh) + 1 / (ra["weighted_goals_against"] + kh)))
     ea = min(0.6, math.sqrt(1 / (ra["weighted_goals_for"] + ka) + 1 / (rh["weighted_goals_against"] + ka)))
+    if strength:  # uncertainty of the league-strength gap widens both expectations
+        eh = min(0.6, math.sqrt(eh ** 2 + strength["var"] / 4))
+        ea = min(0.6, math.sqrt(ea ** 2 + strength["var"] / 4))
     mat = score_matrix(lh, la)
     probs = market_probs(mat)
     variant_mats = [score_matrix(lh * fh, la * fa) for fh in (1 - eh, 1 + eh) for fa in (1 - ea, 1 + ea)]
@@ -269,14 +287,24 @@ def fit_match(store: MatchStore, home_rows: list[TeamRow], away_rows: list[TeamR
     if base.source != comp:
         notes.append(f"Competition has fewer than {settings['min_league_matches']} results; "
                      f"baseline uses {base.source} data ({base.n} matches).")
-    if cross_league:
+    if cross_league and strength:
+        notes.append(f"Cross-league fixture: ratings measured in each domestic league, adjusted by league strength "
+                     f"{strength['home_league']} {strength['home_s']:+.2f} vs {strength['away_league']} "
+                     f"{strength['away_s']:+.2f} (gap {strength['delta']:+.2f} ± {math.sqrt(strength['var']):.2f}, from "
+                     f"{strength['home_n']}/{strength['away_n']} cross-league matches this season).")
+    elif cross_league:
         notes.append("Teams' ratings come from different leagues; strengths were shrunk by "
-                     f"{int(100 * (1 - s))}% toward average because cross-league strength is not calibrated.")
+                     f"{int(100 * (1 - s))}% toward average because no league-strength estimate was available.")
     if rh["capped_scores"] or ra["capped_scores"]:
         notes.append(f"Extreme scores capped at {settings['goal_cap']} goals when estimating ratings "
                      f"({rh['capped_scores'] + ra['capped_scores']} team-scores affected).")
-    if min(rh["n"], ra["n"]) < 8:
-        notes.append("Small sample: ratings are heavily shrunk toward league average.")
+    if min(len(cur_h), len(cur_a)) < 8:
+        notes.append("Small current-season sample: ratings lean on shrinkage" +
+                     (" and last season's matches." if len(cur_h) < len(home_rows) or len(cur_a) < len(away_rows) else "."))
+    prev_h, prev_a = len(home_rows) - len(cur_h), len(away_rows) - len(cur_a)
+    if prev_h or prev_a:
+        notes.append(f"Includes previous-season matches at {int(100 * float(settings.get('history_carryover', 0.5)))}% "
+                     f"weight (home {prev_h}, away {prev_a}) — source football-data.co.uk.")
 
     details = {
         "baseline": {"home_goals": round(base.home, 2), "away_goals": round(base.away, 2),
@@ -286,6 +314,8 @@ def fit_match(store: MatchStore, home_rows: list[TeamRow], away_rows: list[TeamR
         "applied": {"home_attack": round(att_h, 3), "home_defence": round(def_h, 3),
                     "away_attack": round(att_a, 3), "away_defence": round(def_a, 3)},
         "cross_league": cross_league,
+        "league_strength": None if not strength else {k: (round(v, 3) if isinstance(v, float) else v)
+                                                      for k, v in strength.items()},
         "settings": {k: settings[k] for k in ("recency_half_life", "prior_weight", "goal_cap",
                                               "min_matches_model", "cross_league_shrink")},
         "notes": notes,

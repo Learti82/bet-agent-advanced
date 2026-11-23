@@ -163,6 +163,18 @@ CREATE TABLE IF NOT EXISTS predictions (
     result_detail TEXT,
     settled_by TEXT
 );
+CREATE TABLE IF NOT EXISTS odds_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_id TEXT NOT NULL,
+    bookmaker TEXT NOT NULL,
+    market TEXT NOT NULL,
+    selection TEXT NOT NULL,
+    line REAL,
+    odds REAL NOT NULL,
+    captured_at TEXT NOT NULL,
+    source TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_odds_history ON odds_history(match_id, market, selection);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -190,7 +202,21 @@ class Database:
         self.conn = connect(self.path)
         with _lock:
             self.conn.executescript(SCHEMA)
+            self._migrate()
             self.conn.commit()
+
+    # columns added after the first release (SQLite has no ADD COLUMN IF NOT EXISTS)
+    MIGRATIONS = {
+        "predictions": [("closing_odds", "REAL"), ("closing_source", "TEXT"), ("closing_checked_at", "TEXT"),
+                        ("clv", "REAL")],
+    }
+
+    def _migrate(self) -> None:
+        for table, cols in self.MIGRATIONS.items():
+            have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            for name, typ in cols:
+                if name not in have:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {typ}")
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
