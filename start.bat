@@ -24,12 +24,15 @@ if not exist ".venv\Scripts\python.exe" (
   if errorlevel 1 exit /b 1
 )
 set "VPY=%CD%\.venv\Scripts\python.exe"
-if not exist ".venv\.installed" (
-  echo Installing Python packages - first run only, this takes a minute...
+set "NEED_PIP="
+if not exist ".venv\requirements.installed" set "NEED_PIP=1"
+if exist ".venv\requirements.installed" fc /b "backend\requirements.txt" ".venv\requirements.installed" >nul 2>nul || set "NEED_PIP=1"
+if defined NEED_PIP (
+  echo Installing Python packages - this takes a minute...
   "%VPY%" -m pip install --quiet --upgrade pip
   "%VPY%" -m pip install --quiet -r backend\requirements.txt
   if errorlevel 1 exit /b 1
-  echo ok> ".venv\.installed"
+  copy /y "backend\requirements.txt" ".venv\requirements.installed" >nul
 )
 
 if /i "%MODE%"=="--test" (
@@ -43,14 +46,18 @@ if /i "%MODE%"=="--test" (
   exit /b 0
 )
 
-if not exist "frontend\dist\index.html" (
+REM Rebuild the interface when it is missing or any source file is newer than the last build.
+set "NEED_BUILD="
+"%VPY%" -c "import pathlib,sys; d=pathlib.Path('frontend/dist/index.html'); src=[p for p in pathlib.Path('frontend/src').rglob('*') if p.is_file()]+[pathlib.Path('frontend/index.html'),pathlib.Path('frontend/package.json')]; sys.exit(1 if not d.exists() or max(p.stat().st_mtime for p in src)>d.stat().st_mtime else 0)"
+if errorlevel 1 set "NEED_BUILD=1"
+if defined NEED_BUILD (
   where npm >nul 2>nul
   if errorlevel 1 (
     echo Node.js 18 or newer is required to build the interface: https://nodejs.org/
     echo Install the LTS version, open a NEW terminal and run start.bat again.
     exit /b 1
   )
-  echo Building the interface - first run only...
+  echo Building the interface...
   pushd frontend
   if not exist node_modules call npm install --no-audit --no-fund
   call npm run build
