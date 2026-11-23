@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+# Local data (never commit the downloaded dataset or your personal DB)
+data/
+!data/.gitkeep
+# Frontend
+frontend/node_modules/
+frontend/dist/
+# OS / editors
+.DS_Store
+*.log
+.idea/
+.vscode/
+frontend/*.tsbuildinfo
