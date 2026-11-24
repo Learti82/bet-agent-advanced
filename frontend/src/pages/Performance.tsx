@@ -54,16 +54,20 @@ function Backtest() {
     const t = setInterval(load, 2000);
     return () => clearInterval(t);
   }, [run?.status]);
+  const [engine, setEngine] = useState<"ml" | "statistical">("ml");
   const start = async () => {
     setErr(null);
-    try { await api("/api/backtest", { method: "POST", json: {} }); await load(); } catch (e) { setErr((e as Error).message); }
+    try { await api("/api/backtest", { method: "POST", json: { engine } }); await load(); } catch (e) { setErr((e as Error).message); }
   };
   const r = run?.result;
   const legsAll = r?.legs?.find((x: G) => x.season === "all");
   return (
-    <Panel title="Profit backtest — weekend plan" sub="past seasons, real Bet365 prices" actions={<button className="primary" onClick={start} disabled={run?.status === "running"}>{run?.status === "running" ? "Running…" : r ? "Run again" : "Run backtest"}</button>}>
+    <Panel title="Profit backtest — weekend plan" sub={`past seasons, real Bet365 prices${r ? ` · ${r.engine === "ml" ? "trained ML model" : "statistical engine"}` : ""}`} actions={<>
+      <div className="seg"><button className={engine === "ml" ? "on" : ""} onClick={() => setEngine("ml")}>ML model</button><button className={engine === "statistical" ? "on" : ""} onClick={() => setEngine("statistical")}>Statistical</button></div>
+      <button className="primary" onClick={start} disabled={run?.status === "running"}>{run?.status === "running" ? "Running…" : r ? "Run again" : "Run backtest"}</button></>}>
       <ErrorBox error={err ?? (run?.status === "failed" ? run.error : null)} />
       {run?.status === "running" && <Loading label={`Replaying every weekend: ${run.progress}`} />}
+      {engine === "ml" && <p className="tiny muted" style={{ marginBottom: 6 }}>ML mode uses only out-of-sample predictions saved during training (seasons the model never saw), so only the test seasons from the Model lab are replayed. Train the model first.</p>}
       {!r && run?.status !== "running" && <p className="small muted">Replays the weekend plan for every Saturday/Sunday of past seasons (football-data.co.uk), using only data available before each match and Bet365's pre-match prices of the time. Takes about a minute.</p>}
       {r && (
         <>

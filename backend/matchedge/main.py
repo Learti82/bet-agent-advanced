@@ -487,11 +487,43 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             raise HTTPException(400, "None of the weekend leagues are covered by football-data.co.uk.")
         if not any(m.get("season") in seasons for c in comps for m in engine.store.by_comp.get(c, [])):
             raise HTTPException(400, "No historical seasons loaded. Run the import (Data sources) first.")
+        ml_oos = None
+        if body.get("engine") == "ml":
+            from .ml.train import ensure_schema as ml_schema
+            ml_schema(db)
+            rows = db.query("SELECT * FROM ml_oos WHERE variant='market'")
+            if not rows:
+                raise HTTPException(400, "Train the ML model first (Model lab).")
+            ml_oos = {r["match_id"]: {"p_h": r["p_h"], "p_d": r["p_d"], "p_a": r["p_a"], "p_o25": r["p_o25"],
+                                      "p_btts": r["p_btts"], "variant": "market"} for r in rows}
+            seasons = [x for x in seasons if x in {r["season"] for r in rows}]
         try:
-            rid = start_backtest(db, engine.store, s, sorted(seasons), targets, comps)
+            rid = start_backtest(db, engine.store, s, sorted(seasons), targets, comps, ml_oos)
         except RuntimeError as exc:
             raise HTTPException(409, str(exc))
         return {"id": rid, "competitions": comps, "not_covered": skipped}
+
+    # ------------------------------------------------------------------ machine learning
+    @app.post("/api/ml/train")
+    def ml_train():
+        from .ml.train import start_training
+        from .history import ensure_schema as hist_schema
+        hist_schema(db)
+        if not db.one("SELECT 1 x FROM hist_matches LIMIT 1"):
+            raise HTTPException(400, "No historical seasons on this computer yet. Run the import (Data sources) first.")
+        try:
+            rid = start_training(db, engine.store, db.get_settings(), on_done=lambda: (engine.load_ml(), engine.invalidate()))
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+        return {"id": rid}
+
+    @app.get("/api/ml")
+    def ml_status():
+        from .ml import train as train_mod
+        run = train_mod.latest_run(db)
+        return {"run": run, "model_loaded": engine.ml is not None, "load_error": engine.ml_error,
+                "model_meta": engine.ml.meta if engine.ml else None, "model_file": str(train_mod.MODEL_PATH),
+                "prediction_engine": db.get_settings().get("prediction_engine")}
 
     @app.get("/api/backtest")
     def backtest_latest():

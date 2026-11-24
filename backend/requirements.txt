@@ -1,6 +1,8 @@
 fastapi>=0.110
 uvicorn[standard]>=0.27
 numpy>=1.26
+# machine-learning models (free, open source)
+scikit-learn>=1.4
 # IANA timezone data (Europe/Belgrade) is not bundled with Python on Windows
 tzdata; sys_platform == "win32"
 # test-only

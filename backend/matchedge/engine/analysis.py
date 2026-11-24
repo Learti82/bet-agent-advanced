@@ -28,6 +28,8 @@ class Engine:
         self._lock = threading.RLock()
         self.store: MatchStore | None = None
         self.strengths: dict | None = None
+        self.ml = None
+        self.ml_error: str | None = None
         self.version = 0
         self._cache: dict[str, dict] = {}
         self.refresh()
@@ -49,7 +51,18 @@ class Engine:
                 self.strengths = fit_strengths(self.store, settings)
             except Exception:  # noqa: BLE001 - never block the app; cross-league falls back to shrinkage
                 self.strengths = None
+            self.load_ml()
             self.invalidate()
+
+    def load_ml(self) -> None:
+        """Load the trained ML model if one exists (data/models/). The app works fully without it."""
+        self.ml = None
+        self.ml_error = None
+        try:
+            from ..ml.predict import MLPredictor
+            self.ml = MLPredictor.load(self.db, self.store)
+        except Exception as exc:  # noqa: BLE001 - e.g. a model file from an incompatible library version
+            self.ml_error = f"{type(exc).__name__}: {exc}"
 
     def invalidate(self) -> None:
         with self._lock:
@@ -207,6 +220,18 @@ class Engine:
                                  (match_id,))
         if not settings["allow_snapshot_odds"]:
             odds_rows = [o for o in odds_rows if o["source"] == "manual"]
+        ml_variant = None
+        if (settings.get("prediction_engine", "auto") != "statistical" and self.ml is not None and kind == "league"
+                and not cross_league and goals.available):
+            try:
+                pred = self.ml.predict(m, goals, odds_rows, settings)
+            except Exception:  # noqa: BLE001 - fall back to the statistical engine
+                pred = None
+            if pred:
+                from ..ml.predict import apply_ml
+                goals = apply_ml(goals, pred)
+                goals_d = goals.to_dict()
+                ml_variant = pred["variant"]
         candidates = evaluate_candidates(home=m["home"], away=m["away"], home_rows=home_rows,
                                          away_rows=away_rows, goals=goals, corners=corners, cards=cards,
                                          odds_rows=odds_rows, research=research, settings=settings,
@@ -265,6 +290,7 @@ class Engine:
                        "baseline_source": base.source, "coverage": store.competitions.get(comp, {}).get("coverage", {})},
             "profiles": {"home": home_p, "away": away_p},
             "model": goals_d, "corners": corners, "cards": cards,
+            "prediction_engine": "ml" if ml_variant else "statistical", "ml_variant": ml_variant,
             "candidates": candidates,
             "recommendation": recommendation,
             "research_score": rscore, "data_quality": dq, "risk": risk,

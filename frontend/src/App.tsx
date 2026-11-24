@@ -11,6 +11,7 @@ import MatchResearch from "./pages/MatchResearch";
 import Accumulator from "./pages/Accumulator";
 import Rejected from "./pages/Rejected";
 import Performance from "./pages/Performance";
+import ModelLab from "./pages/ModelLab";
 import DataSources from "./pages/DataSources";
 import Settings from "./pages/Settings";
 
@@ -26,6 +27,7 @@ const NAV = [
   ["/accumulator", "Accumulator builder"],
   ["/rejected", "Rejected matches"],
   ["/performance", "Historical performance"],
+  ["/model", "Model lab"],
   ["/data", "Data sources"],
   ["/settings", "Settings"],
 ] as const;
@@ -94,6 +96,7 @@ export default function App() {
             <Route path="/accumulator" element={<Accumulator />} />
             <Route path="/rejected" element={<Rejected />} />
             <Route path="/performance" element={<Performance />} />
+            <Route path="/model" element={<ModelLab />} />
             <Route path="/data" element={<DataSources />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<div className="page"><h1>Not found</h1></div>} />

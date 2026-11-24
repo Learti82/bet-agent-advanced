@@ -1,6 +1,13 @@
 """Shared fixtures: a small, deterministic synthetic Open-Matchday-shaped dataset (no network)."""
 from __future__ import annotations
 
+import os
+import tempfile
+
+# Tests must never read or write the user's real data (database, downloads, trained model):
+# point the data directory at a throwaway folder before any matchedge module is imported.
+os.environ["MATCHEDGE_DATA_DIR"] = tempfile.mkdtemp(prefix="matchedge-test-")
+
 import csv
 import json
 import random

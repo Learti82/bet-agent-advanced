@@ -214,7 +214,10 @@ class GoalModel:
         return {
             "available": self.available,
             "reason": self.reason,
-            "label": "Model estimate (independent Poisson) — not a verified probability",
+            "label": ("Model estimate (trained ML model, goal markets via re-fitted Poisson) — not a verified probability"
+                      if (self.details or {}).get("engine") == "ml" else
+                      "Model estimate (independent Poisson) — not a verified probability"),
+            "engine": (self.details or {}).get("engine", "statistical"),
             "expected_goals": None if not self.available else {
                 "home": round(self.lambda_home, 2), "away": round(self.lambda_away, 2),
                 "total": round(self.lambda_home + self.lambda_away, 2),

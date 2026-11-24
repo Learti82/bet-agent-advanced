@@ -15,6 +15,7 @@ def main(argv: list[str] | None = None) -> int:
     i = sub.add_parser("import", help="Download and import the Open-Matchday dataset")
     i.add_argument("--local", help="Import from a local clone of the open-matchday repository instead")
     sub.add_parser("settle", help="Settle pending predictions against imported results")
+    sub.add_parser("train", help="Train and validate the machine-learning models (needs historical seasons)")
     args = p.parse_args(argv)
 
     if args.cmd == "serve":
@@ -43,6 +44,15 @@ def main(argv: list[str] | None = None) -> int:
         print("Historical seasons (football-data.co.uk):", run_history_import(db))
         from .engine.tracking import auto_settle
         print("Settlement:", auto_settle(db))
+        return 0
+    if args.cmd == "train":
+        from .engine.analysis import Engine
+        from .ml.train import train_all
+        eng = Engine(db)
+        rep = train_all(db, eng.store, db.get_settings(), progress=lambda m: print(" ", m, flush=True))
+        for target, by in rep["pooled"].items():
+            print(target, {k: (v["log_loss"], v["accuracy"]) for k, v in by.items()})
+        print("Saved model:", rep["meta"]["trained_at"], f"({rep['meta']['rows']} matches)")
         return 0
     if args.cmd == "settle":
         from .engine.tracking import auto_settle

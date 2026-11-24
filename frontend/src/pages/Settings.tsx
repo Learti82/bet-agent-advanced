@@ -35,6 +35,9 @@ const GROUPS: [string, string, [string, string][]][] = [
     ["plan_max_legs", "Leg limit for weekly-plan tickets. More legs reach bigger targets but lower the chance of the whole ticket."],
     ["plan_weekend_competitions", "Weekend league codes, comma-separated. Empty = European top divisions. Easier to edit on the Weekly plan page."],
   ]],
+  ["Trained ML model", "Train and inspect it on the Model lab page.", [
+    ["prediction_engine", "auto = use the trained model for covered domestic-league fixtures where it beat the statistical engine out of sample; statistical = never use it."],
+  ]],
   ["Optional local AI (Ollama)", "Runs on your computer. Disabled by default; the app works fully without it.", [
     ["ai_enabled", "Use a local Ollama model to write explanations (validated against the data)."],
     ["ollama_url", "Local Ollama address."],

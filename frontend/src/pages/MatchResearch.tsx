@@ -98,7 +98,7 @@ function MatchView({ id }: { id: string }) {
         <div className="panel stat">
           <div className="k">Model expected goals</div>
           <div className="v num">{a.model.available ? `${a.model.expected_goals.home} – ${a.model.expected_goals.away}` : "—"}</div>
-          <div className="d">{a.model.available ? `Poisson estimate · total ${a.model.expected_goals.total} vs league ${a.league.avg_total_goals}` : a.model.reason}</div>
+          <div className="d">{a.model.available ? `${a.prediction_engine === "ml" ? `Trained ML model (${a.ml_variant === "market" ? "stats + Bet365 odds" : "stats only"})` : "Statistical (Poisson)"} · total ${a.model.expected_goals.total} vs league ${a.league.avg_total_goals}` : a.model.reason}</div>
         </div>
       </div>
 
@@ -584,6 +584,16 @@ function ModelTab({ a }: { a: Analysis }) {
         <Components title={`Match research score: ${a.research_score.score}`} c={a.research_score.components} />
         <Components title={`Data quality: ${a.data_quality.score}`} c={a.data_quality.components} />
       </div>
+      {m.details?.ml && (
+        <div>
+          <h3 style={{ marginBottom: 6 }}>Trained ML model vs statistical engine</h3>
+          <table className="tbl"><thead><tr><th>Market</th><th className="num">Statistical engine</th><th className="num">ML ({m.details.ml.variant === "market" ? "stats + Bet365 odds" : "stats only"}) — used</th></tr></thead>
+            <tbody>{[["home", "Home win"], ["draw", "Draw"], ["away", "Away win"], ["over_2.5", "Over 2.5"], ["btts_yes", "Both teams score"]].map(([k, l]) => (
+              <tr key={k}><td>{l}</td><td className="num muted">{pct(m.details.ml.statistical_engine[k])}</td><td className="num"><b>{pct(m.details.ml.ml[k])}</b></td></tr>
+            ))}</tbody></table>
+          <p className="tiny muted" style={{ marginTop: 4 }}>Out of sample the ML was more accurate than the statistical engine (see <Link to="/model">Model lab</Link>). Other goal markets use expected goals re-fitted to the ML: {m.details.ml.lambda_home}–{m.details.ml.lambda_away}.</p>
+        </div>
+      )}
       {!m.available ? <div className="notice warn">Goal model: {m.reason}</div> : (
         <div className="grid g2">
           <div>

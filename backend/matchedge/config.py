@@ -44,6 +44,10 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "goal_cap": 5,  # goals per team per match counted when estimating ratings (extreme results)
     "min_league_matches": 30,  # competition matches needed for a reliable league baseline
     "cross_league_shrink": 0.5,
+    # --- trained ML model ---
+    # "auto": use the trained model for covered domestic-league fixtures when it beat the statistical engine
+    # out of sample (per market); "statistical": never; "ml": same as auto (ML is only used where it validated)
+    "prediction_engine": "auto",
     # --- historical seasons (football-data.co.uk) ---
     "history_enabled": True,
     "history_seasons": 5,  # completed seasons to download

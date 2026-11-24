@@ -100,6 +100,16 @@ scorers…) and lines it cannot read are listed, never guessed. Nothing logs in 
   European results (see docs/MODEL.md); walk-forward on 124 UEFA matches it predicted better than
   the old fixed shrinkage (log loss 1.658 vs 1.678).
 
+### Trained machine-learning model (Model lab)
+
+**Model lab → Train model** trains gradient-boosted trees (scikit-learn) on every past season on your
+computer, validates them on seasons they never saw, and — where they beat the statistical engine —
+uses them for match result, Over 2.5 and BTTS (other goal markets derived consistently). On 22,388
+unseen matches the ML was clearly more accurate than the statistical engine (match-result log loss
+1.016 vs 1.026; 1.002 with Bet365 odds as an input, level with Bet365's own 1.000) and well
+calibrated. It does **not** beat Bet365: value-betting simulations lost money in every test season.
+Details and numbers: [`docs/ML.md`](docs/ML.md).
+
 ### Daily routine
 
 1. **Data sources → Download & import latest** (the dataset is rebuilt upstream every day at 00:00 UTC).
@@ -109,6 +119,7 @@ scorers…) and lines it cannot read are listed, never guessed. Nothing logs in 
 3. **Match research**: enter your Bet365 prices (Odds tab) and any research (Research tab).
 4. **Accumulator builder**: click selections into the slip, or auto-build toward your target.
 5. **Save & track**: the next import settles your selections automatically.
+6. Every week or two: **Model lab → Retrain model** so the ML includes the newest results.
 
 ### Manual setup (if you prefer)
 

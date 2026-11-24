@@ -59,7 +59,7 @@ def closing_for(m: dict, market: str, selection: str, line) -> float | None:
     return fd_closing(m, market, selection, line)
 
 
-def analyse_historical(store: MatchStore, m: dict, settings: dict) -> dict | None:
+def analyse_historical(store: MatchStore, m: dict, settings: dict, ml_oos: dict | None = None) -> dict | None:
     season, comp, day = m["season"], m["competition"], m["date_obj"]
     min_n = int(settings["min_matches_model"])
     legs_out = []
@@ -77,6 +77,12 @@ def analyse_historical(store: MatchStore, m: dict, settings: dict) -> dict | Non
     goals = fit_match(store, hm, am, comp, day, settings, False, season)
     if not goals.available:
         return None
+    if ml_oos is not None:
+        pred = ml_oos.get(m["id"])
+        if pred is None:
+            return None  # ML backtest: only matches with an out-of-sample ML prediction
+        from ..ml.predict import apply_ml
+        goals = apply_ml(goals, pred)
     corners = count_model("corners", store, hc, ac, comp, day, settings)
     cards = count_model("cards", store, hc, ac, comp, day, settings)
     cands = evaluate_candidates(home=m["home"], away=m["away"], home_rows=hc, away_rows=ac, goals=goals,
@@ -118,7 +124,8 @@ def settle_leg(leg: dict, m: dict) -> str:
 
 
 def run_backtest(store: MatchStore, settings: dict, seasons: list[str], targets: list[float],
-                 competitions: list[str], progress=lambda done, total, msg: None) -> dict:
+                 competitions: list[str], progress=lambda done, total, msg: None,
+                 ml_oos: dict | None = None) -> dict:
     max_legs = int(settings["plan_max_legs"])
     by_season: dict[str, dict] = {}
     all_weekends = []
@@ -136,7 +143,7 @@ def run_backtest(store: MatchStore, settings: dict, seasons: list[str], targets:
         progress(i, total, f"{season} weekend {wk.isoformat()}")
         pool_good, pool_weak, by_id = [], [], {m["id"]: m for m in ms}
         for m in ms:
-            a = analyse_historical(store, m, settings)
+            a = analyse_historical(store, m, settings, ml_oos)
             if not a or not a["legs"]:
                 continue
             best = max(a["legs"], key=lambda x: x["score"])
@@ -176,7 +183,8 @@ def run_backtest(store: MatchStore, settings: dict, seasons: list[str], targets:
         ls = [x for x in legs if season == "all" or x["season"] == season]
         leg_stats.append({"season": season, **_leg_stats(ls)})
     by_market = {mk: _leg_stats([x for x in legs if x["market"] == mk]) for mk in sorted({x["market"] for x in legs})}
-    return {"seasons": seasons, "targets": targets, "competitions": competitions, "weekends": total,
+    return {"engine": "ml" if ml_oos is not None else "statistical",
+            "seasons": seasons, "targets": targets, "competitions": competitions, "weekends": total,
             "tickets": summary, "legs": leg_stats, "legs_by_market": by_market,
             "ticket_log": tickets[-400:], "settings": {k: settings.get(k) for k in (
                 "prior_weight", "recency_half_life", "history_carryover", "min_leg_probability", "min_leg_odds",
@@ -232,20 +240,21 @@ def backtest_competitions(weekend_codes: list[str]) -> tuple[list[str], list[str
 
 
 def start_backtest(db: Database, store: MatchStore, settings: dict, seasons: list[str], targets: list[float],
-                   competitions: list[str]) -> int:
+                   competitions: list[str], ml_oos: dict | None = None) -> int:
     with db.tx() as c:
         c.execute(SCHEMA)
     if not _job_lock.acquire(blocking=False):
         raise RuntimeError("A backtest is already running.")
     run_id = db.execute("INSERT INTO backtest_runs(started_at, status, progress, params) VALUES(?,?,?,?)",
                         (iso(now_utc()), "running", "starting",
-                         json.dumps({"seasons": seasons, "targets": targets, "competitions": competitions})))
+                         json.dumps({"seasons": seasons, "targets": targets, "competitions": competitions,
+                                     "engine": "ml" if ml_oos is not None else "statistical"})))
 
     def work():
         try:
             def prog(done, total, msg):
                 db.execute("UPDATE backtest_runs SET progress=? WHERE id=?", (f"{done}/{total} · {msg}", run_id))
-            res = run_backtest(store, settings, seasons, targets, competitions, prog)
+            res = run_backtest(store, settings, seasons, targets, competitions, prog, ml_oos)
             db.execute("UPDATE backtest_runs SET status='ok', finished_at=?, result=? WHERE id=?",
                        (iso(now_utc()), json.dumps(res), run_id))
         except Exception as exc:  # noqa: BLE001 - surfaced in the UI
